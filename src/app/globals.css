@@ -1,0 +1,136 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-fraunces);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/*
+ * Terra & Thread — warm artisan palette (light theme only)
+ * cream background · stone text · terracotta primary · sage secondary
+ * NO indigo / blue / purple anywhere.
+ */
+:root {
+  --radius: 0.75rem;
+  --background: #faf6ef;
+  --foreground: #292524;
+  --card: #fffdf8;
+  --card-foreground: #292524;
+  --popover: #fffdf8;
+  --popover-foreground: #292524;
+  --primary: #b45309;
+  --primary-foreground: #fff8ef;
+  --secondary: #e5e9dc;
+  --secondary-foreground: #3d4534;
+  --muted: #f1eadd;
+  --muted-foreground: #78716c;
+  --accent: #f4ecdf;
+  --accent-foreground: #7c3a0d;
+  --destructive: #b91c1c;
+  --border: #e7ddcc;
+  --input: #e0d5c1;
+  --ring: #c2701e;
+  --chart-1: #b45309;
+  --chart-2: #7d8b5e;
+  --chart-3: #d6a35c;
+  --chart-4: #8c6d4a;
+  --chart-5: #a8562f;
+  --sidebar: #f6f0e5;
+  --sidebar-foreground: #292524;
+  --sidebar-primary: #b45309;
+  --sidebar-primary-foreground: #fff8ef;
+  --sidebar-accent: #efe6d4;
+  --sidebar-accent-foreground: #292524;
+  --sidebar-border: #e7ddcc;
+  --sidebar-ring: #c2701e;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  ::selection {
+    background: #f3ddb8;
+    color: #431407;
+  }
+
+  /* Thin, warm custom scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #d9cab2 transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: #d9cab2;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: #c2ac8d;
+  }
+}
+
+@layer utilities {
+  /* Editorial serif display for brand/headings */
+  .font-display {
+    font-family: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  }
+  /* Subtle paper grain texture for hero/backdrops */
+  .bg-paper {
+    background-color: #f6efe3;
+    background-image:
+      radial-gradient(circle at 15% 20%, rgba(180, 83, 9, 0.06) 0%, transparent 45%),
+      radial-gradient(circle at 85% 10%, rgba(125, 139, 94, 0.08) 0%, transparent 40%),
+      radial-gradient(circle at 60% 90%, rgba(214, 163, 92, 0.07) 0%, transparent 45%);
+  }
+}
