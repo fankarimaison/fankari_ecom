@@ -486,13 +486,20 @@ on conflict (slug) do nothing;
 -- ============================================================================
 -- 9. Seed demo accounts (confirmed emails, idempotent)
 --    auth.users inserts fire the signup trigger → profiles are created
+--
+--    NOTE: we deliberately avoid ON CONFLICT here. auth.users enforces email
+--    uniqueness with a PARTIAL unique index (users_email_partial_key, where
+--    is_sso_user = false), and partial indexes cannot be used as a plain
+--    `ON CONFLICT (email)` arbiter (that raises SQLSTATE 42P10). A
+--    where-not-exists guard achieves the same idempotency.
 -- ============================================================================
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
   confirmation_token, recovery_token, email_change_token_new, email_change
-) values (
+)
+select
   '00000000-0000-0000-0000-000000000000',
   '11111111-1111-1111-1111-111111111111',
   'authenticated', 'authenticated',
@@ -502,13 +509,16 @@ insert into auth.users (
   '{"provider":"email","providers":["email"]}',
   '{"name":"Studio Admin"}',
   now(), now(), '', '', '', ''
-) on conflict (email) do nothing;
+where not exists (
+  select 1 from auth.users where email = 'admin@terrathread.com'
+);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
   confirmation_token, recovery_token, email_change_token_new, email_change
-) values (
+)
+select
   '00000000-0000-0000-0000-000000000000',
   '22222222-2222-2222-2222-222222222222',
   'authenticated', 'authenticated',
@@ -518,15 +528,32 @@ insert into auth.users (
   '{"provider":"email","providers":["email"]}',
   '{"name":"Demo Customer"}',
   now(), now(), '', '', '', ''
-) on conflict (email) do nothing;
+where not exists (
+  select 1 from auth.users where email = 'customer@example.com'
+);
 
 -- Matching auth.identities rows (needed for a fully valid auth user)
-insert into auth.identities (user_id, provider_id, provider, identity_id, identity_data, last_sign_in_at, created_at, updated_at) values
-  ('11111111-1111-1111-1111-111111111111', 'email', 'email', '11111111-1111-1111-1111-111111111111',
-   '{"sub":"11111111-1111-1111-1111-111111111111","email":"admin@terrathread.com","email_verified":true}', now(), now(), now()),
-  ('22222222-2222-2222-2222-222222222222', 'email', 'email', '22222222-2222-2222-2222-222222222222',
-   '{"sub":"22222222-2222-2222-2222-222222222222","email":"customer@example.com","email_verified":true}', now(), now(), now())
-on conflict (provider_id, identity_id) do nothing;
+insert into auth.identities (user_id, provider_id, provider, identity_id, identity_data, last_sign_in_at, created_at, updated_at)
+select
+  '11111111-1111-1111-1111-111111111111', 'email', 'email',
+  '11111111-1111-1111-1111-111111111111',
+  '{"sub":"11111111-1111-1111-1111-111111111111","email":"admin@terrathread.com","email_verified":true}',
+  now(), now(), now()
+where not exists (
+  select 1 from auth.identities
+  where provider_id = 'email' and identity_id = '11111111-1111-1111-1111-111111111111'
+);
+
+insert into auth.identities (user_id, provider_id, provider, identity_id, identity_data, last_sign_in_at, created_at, updated_at)
+select
+  '22222222-2222-2222-2222-222222222222', 'email', 'email',
+  '22222222-2222-2222-2222-222222222222',
+  '{"sub":"22222222-2222-2222-2222-222222222222","email":"customer@example.com","email_verified":true}',
+  now(), now(), now()
+where not exists (
+  select 1 from auth.identities
+  where provider_id = 'email' and identity_id = '22222222-2222-2222-2222-222222222222'
+);
 
 -- Make sure passwords/confirmation are correct even if the users already existed
 update auth.users

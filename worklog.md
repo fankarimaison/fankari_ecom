@@ -154,3 +154,16 @@ Stage Summary:
 - Store now runs on Supabase Postgres (RLS-enforced) + Supabase Auth (cookie sessions via @supabase/ssr + proxy refresh). Prisma/JWT fully removed from the API layer.
 - ONE user step remaining: paste supabase/schema.sql into Supabase SQL Editor and Run — creates tables, policies, RPCs, seed data, demo accounts. UI banner guides the user until applied.
 - Note: Supabase project has email confirmation ON + strict built-in SMTP rate limit (~2/hr) — register shows "check your email" panel on success and friendly 429 when throttled; seeded demo accounts are pre-confirmed and unaffected.
+
+---
+Task ID: 6-fix
+Agent: orchestrator (main)
+Task: Fix SQLSTATE 42P10 in supabase/schema.sql (user-reported, SQL Editor run)
+
+Work Log:
+- Root cause: auth.users enforces email uniqueness via a PARTIAL unique index (users_email_partial_key ... WHERE is_sso_user = false); partial indexes cannot serve as a plain ON CONFLICT (email) arbiter → 42P10 on the demo-account seed inserts (section 9)
+- Rewrote auth.users + auth.identities seed inserts to insert...select...where not exists guards (no ON CONFLICT on auth-schema tables); audited all remaining ON CONFLICT targets: profiles(id)=PK, site_content(key)=PK, products(slug)=UNIQUE — all real constraints
+- Script remains fully idempotent; sections 1-8 (tables/policies/trigger/RPCs/product+content seed) applied successfully before the error, so re-running the fixed script only completes the demo accounts
+
+Stage Summary:
+- schema.sql fixed — user must re-run the updated script in SQL Editor (safe even if first run partially applied)
