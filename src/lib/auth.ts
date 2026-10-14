@@ -1,96 +1,53 @@
-import { SignJWT, jwtVerify } from 'jose'
-import { cookies } from 'next/headers'
-import type { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
-/** Cookie name used for the session JWT. */
-export const SESSION_COOKIE = 'session'
-
-/** Session lifetime: 7 days, in seconds. */
-export const SESSION_MAX_AGE = 60 * 60 * 24 * 7
-
-/** Orders at or above this subtotal ship free. */
+/**
+ * Orders at or above this subtotal ship free.
+ */
 export const FREE_SHIPPING_THRESHOLD = 75
 
 /** Flat shipping fee applied below the free-shipping threshold. */
 export const FLAT_SHIPPING = 6.99
 
-export interface SessionPayload {
-  userId: string
-  email: string
-  role: string
-}
-
 export interface SessionUser {
   id: string
   email: string
-  role: string
-}
-
-function getSecret(): Uint8Array {
-  const secret =
-    process.env.AUTH_SECRET ||
-    'terra-and-thread-dev-secret-change-me-in-production'
-  return new TextEncoder().encode(secret)
-}
-
-/** Sign a session JWT (HS256, 7 day expiry). */
-export function signSession(payload: SessionPayload): Promise<string> {
-  return new SignJWT({
-    userId: payload.userId,
-    email: payload.email,
-    role: payload.role,
-  })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('7d')
-    .sign(getSecret())
-}
-
-/** Attach the httpOnly session cookie to a response. */
-export function setSessionCookie(response: NextResponse, token: string): NextResponse {
-  response.cookies.set({
-    name: SESSION_COOKIE,
-    value: token,
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: SESSION_MAX_AGE,
-  })
-  return response
-}
-
-/** Clear the session cookie (logout). */
-export function clearSessionCookie(response: NextResponse): NextResponse {
-  response.cookies.set({
-    name: SESSION_COOKIE,
-    value: '',
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 0,
-  })
-  return response
+  name: string
+  role: 'CUSTOMER' | 'ADMIN'
 }
 
 /**
- * Read + verify the session from the `session` cookie.
- * Works in route handlers / server code. Returns null when missing or invalid.
+ * Read the signed-in user from the Supabase session (cookies managed by
+ * @supabase/ssr + middleware). Returns null when signed out.
+ *
+ * Accepts an optional existing server client to avoid creating a second one:
+ *   const supabase = await createClient()
+ *   const user = await getSessionUser(supabase)
  */
-export async function getSessionUser(req?: NextRequest): Promise<SessionUser | null> {
+export async function getSessionUser(
+  client?: SupabaseClient,
+): Promise<SessionUser | null> {
   try {
-    const token =
-      req?.cookies.get(SESSION_COOKIE)?.value ??
-      (await cookies()).get(SESSION_COOKIE)?.value
-    if (!token) return null
+    const supabase = client ?? (await createClient())
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return null
 
-    const { payload } = await jwtVerify(token, getSecret())
-    const userId = payload.userId
-    if (typeof userId !== 'string' || !userId) return null
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('name, email, role')
+      .eq('id', user.id)
+      .single()
+
+    const role =
+      profile?.role === 'ADMIN' ? ('ADMIN' as const) : ('CUSTOMER' as const)
 
     return {
-      id: userId,
-      email: typeof payload.email === 'string' ? payload.email : '',
-      role: typeof payload.role === 'string' ? payload.role : 'CUSTOMER',
+      id: user.id,
+      email: profile?.email ?? user.email ?? '',
+      name: profile?.name ?? '',
+      role,
     }
   } catch {
     return null
@@ -105,4 +62,20 @@ export async function getSessionUser(req?: NextRequest): Promise<SessionUser | n
  */
 export async function requireUser(): Promise<SessionUser | null> {
   return getSessionUser()
+}
+
+/**
+ * True when the error looks like "table does not exist" — i.e. the Supabase
+ * schema (supabase/schema.sql) has not been applied yet.
+ */
+export function isSchemaMissing(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false
+  if (error.code === 'PGRST205' || error.code === '42P01') return true
+  const msg = (error.message ?? '').toLowerCase()
+  return (
+    msg.includes('could not find the table') ||
+    msg.includes('does not exist in the schema cache') ||
+    msg.includes('relation') && msg.includes('does not exist') ||
+    msg.includes('schema cache')
+  )
 }

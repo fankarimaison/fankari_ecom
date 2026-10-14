@@ -7,11 +7,25 @@
 
 export class ApiError extends Error {
   status: number;
+  /**
+   * True when the backend reports the Supabase schema hasn't been applied yet
+   * (`503 { error, setupRequired: true }` — the Setup guard in docs/api-contract.md).
+   */
+  setupRequired?: boolean;
+
   constructor(message: string, status: number) {
     super(message);
     this.name = "ApiError";
     this.status = status;
   }
+}
+
+/** Type guard — true when the error is the backend's "database not set up" signal. */
+export function isSetupRequired(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err as Error & { setupRequired?: unknown }).setupRequired === true
+  );
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -31,13 +45,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let setupRequired = false;
     try {
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as {
+        error?: string;
+        setupRequired?: boolean;
+      };
       if (data?.error) message = data.error;
+      if (data?.setupRequired === true) setupRequired = true;
     } catch {
       // ignore body parse errors
     }
-    throw new ApiError(message, res.status);
+    const err = new ApiError(message, res.status);
+    if (setupRequired) err.setupRequired = true;
+    throw err;
   }
 
   return (await res.json()) as T;

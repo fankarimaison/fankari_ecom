@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import bcrypt from 'bcryptjs'
-import { db } from '@/lib/db'
-import { setSessionCookie, signSession } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { fetchProfile, mapAuthUser } from '@/lib/dto'
 
+// POST /api/auth/login — Supabase Auth password sign-in
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => null)) as Record<string, unknown> | null
@@ -17,21 +17,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })
     }
 
-    const user = await db.user.findUnique({ where: { email } })
-    if (!user) {
+    const supabase = await createClient()
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+
+    // Map every Supabase failure (invalid credentials, "Email not confirmed",
+    // user not found, …) to the single 401 message from the contract.
+    if (error || !data.session || !data.user) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
     }
 
-    const valid = await bcrypt.compare(password, user.password)
-    if (!valid) {
-      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
-    }
-
-    const token = await signSession({ userId: user.id, email: user.email, role: user.role })
-    const res = NextResponse.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
-    })
-    return setSessionCookie(res, token)
+    const profile = await fetchProfile(supabase, data.user.id)
+    return NextResponse.json({ user: mapAuthUser(data.user, profile) })
   } catch (err) {
     console.error('POST /api/auth/login error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })

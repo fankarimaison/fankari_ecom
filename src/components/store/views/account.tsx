@@ -58,6 +58,8 @@ export function AccountView() {
 /* ------------------------------ Signed out ------------------------------- */
 
 function SignedOut() {
+  const [tab, setTab] = useState<"signin" | "register">("signin");
+
   return (
     <Card className="mx-auto max-w-md">
       <CardHeader className="text-center">
@@ -70,7 +72,10 @@ function SignedOut() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="signin">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as "signin" | "register")}
+        >
           <TabsList className="grid h-11 w-full grid-cols-2">
             <TabsTrigger value="signin" className="min-h-9">Sign in</TabsTrigger>
             <TabsTrigger value="register" className="min-h-9">Create account</TabsTrigger>
@@ -79,7 +84,7 @@ function SignedOut() {
             <LoginForm />
           </TabsContent>
           <TabsContent value="register" className="mt-4">
-            <RegisterForm />
+            <RegisterForm onBackToSignIn={() => setTab("signin")} />
           </TabsContent>
         </Tabs>
 
@@ -92,6 +97,10 @@ function SignedOut() {
           <p>
             Admin: <span className="font-mono">admin@terrathread.com</span> /{" "}
             <span className="font-mono">admin123</span>
+          </p>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            New sign-ups receive a confirmation email before their first
+            sign-in.
           </p>
         </div>
       </CardContent>
@@ -175,28 +184,54 @@ function LoginForm() {
   );
 }
 
-function RegisterForm() {
+function RegisterForm({ onBackToSignIn }: { onBackToSignIn: () => void }) {
   const { toast } = useToast();
   const navigate = useStore((s) => s.navigate);
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Set when the Supabase project requires email confirmation
+  // (register → { user: null, needsConfirmation: true, message }).
+  const [confirmation, setConfirmation] = useState<{
+    email: string;
+    message: string;
+  } | null>(null);
 
   const register = useMutation({
     mutationFn: async () => {
-      const data = await apiPost<{ user: User }>("/api/auth/register", {
+      const data = await apiPost<{
+        user: User | null;
+        needsConfirmation?: boolean;
+        message?: string;
+      }>("/api/auth/register", {
         name: name.trim(),
         email: email.trim(),
         password,
       });
-      return data.user;
+      return data;
     },
-    onSuccess: (user) => {
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
-      toast({ title: `Welcome, ${user.name.split(" ")[0]}!`, description: "Your account is ready." });
-      navigate({ name: "home" });
+    onSuccess: (data) => {
+      if (data.user) {
+        // Email confirmation disabled — signed in immediately.
+        void queryClient.invalidateQueries({ queryKey: ["me"] });
+        void queryClient.invalidateQueries({ queryKey: ["cart"] });
+        toast({
+          title: `Welcome, ${data.user.name.split(" ")[0]}!`,
+          description: "Your account is ready.",
+        });
+        navigate({ name: "home" });
+        return;
+      }
+      if (data.needsConfirmation) {
+        // Email confirmation enabled — show the check-your-email panel.
+        setConfirmation({
+          email: email.trim(),
+          message:
+            data.message ??
+            "Account created! Check your email to confirm your address before signing in.",
+        });
+      }
     },
     onError: (error) => {
       toast({
@@ -206,6 +241,39 @@ function RegisterForm() {
       });
     },
   });
+
+  if (confirmation) {
+    return (
+      <div className="flex flex-col items-center py-6 text-center">
+        <span className="flex size-12 items-center justify-center rounded-full bg-secondary">
+          <Mail className="size-6 text-secondary-foreground" aria-hidden />
+        </span>
+        <h3 className="font-display mt-4 text-xl font-semibold">
+          Check your email
+        </h3>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          {confirmation.message}
+        </p>
+        <p className="mt-2 text-sm leading-relaxed">
+          We sent a confirmation link to{" "}
+          <span className="font-semibold">{confirmation.email}</span>.
+        </p>
+        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+          Click the confirmation link to verify your address, then sign in.
+        </p>
+        <Button
+          variant="outline"
+          className="mt-5 min-h-11 rounded-full"
+          onClick={() => {
+            setConfirmation(null);
+            onBackToSignIn();
+          }}
+        >
+          Back to sign in
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <form

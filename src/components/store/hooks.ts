@@ -17,7 +17,12 @@ export function useMe() {
   });
 }
 
-/** Editable site content (brand name, hero copy, announcement…). */
+/**
+ * Editable site content (brand name, hero copy, announcement…).
+ * Resilient by design: on ANY error (network, auth, or the Supabase setup
+ * guard) the query fails fast and `data` stays undefined — consumers render
+ * their built-in defaults instead of breaking.
+ */
 export function useContent() {
   return useQuery({
     queryKey: ["content"],
@@ -26,6 +31,7 @@ export function useContent() {
       return data.content;
     },
     staleTime: 60_000,
+    retry: false,
   });
 }
 

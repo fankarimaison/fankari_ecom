@@ -1,30 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import {
+  fetchCartPayload,
+  setupRequiredResponse,
+  UUID_RE,
+  type CartPayload,
+} from '@/lib/dto'
 
-const round2 = (n: number) => Math.round(n * 100) / 100
-
-/** Full refreshed cart payload, shared by every cart mutation response. */
-async function buildCartResponse(userId: string) {
-  const rows = await db.cartItem.findMany({
-    where: { userId },
-    orderBy: { createdAt: 'asc' },
-    include: { product: true },
-  })
-  const subtotal = round2(rows.reduce((sum, item) => sum + item.product.price * item.quantity, 0))
-  const count = rows.reduce((sum, item) => sum + item.quantity, 0)
-  return NextResponse.json({ items: rows, subtotal, count })
-}
+type SchemaError = { code?: string; message?: string }
 
 // GET /api/cart
 export async function GET() {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to use your cart' }, { status: 401 })
     }
-    return await buildCartResponse(user.id)
+
+    const payload = await fetchCartPayload(supabase, user.id)
+    return NextResponse.json(payload)
   } catch (err) {
+    if (isSchemaMissing(err as SchemaError)) return setupRequiredResponse()
     console.error('GET /api/cart error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
   }
@@ -33,7 +31,8 @@ export async function GET() {
 // POST /api/cart { productId, quantity? } — upsert (increments when the item exists)
 export async function POST(req: NextRequest) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to use your cart' }, { status: 401 })
     }
@@ -60,36 +59,64 @@ export async function POST(req: NextRequest) {
       quantity = body.quantity
     }
 
-    const product = await db.product.findUnique({ where: { id: productId } })
+    if (!UUID_RE.test(productId)) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+    }
+
+    const { data: product, error: productError } = await supabase
+      .from('products')
+      .select('*')
+      .eq('id', productId)
+      .maybeSingle()
+    if (productError) {
+      if (isSchemaMissing(productError)) return setupRequiredResponse()
+      console.error('POST /api/cart product fetch error:', productError.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
     if (!product || !product.active) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    const existing = await db.cartItem.findUnique({
-      where: { userId_productId: { userId: user.id, productId } },
-    })
+    const { data: existing, error: existingError } = await supabase
+      .from('cart_items')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('product_id', productId)
+      .maybeSingle()
+    if (existingError) {
+      console.error('POST /api/cart item fetch error:', existingError.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
 
-    const requestedTotal = (existing?.quantity ?? 0) + quantity
-    if (requestedTotal > product.stock) {
-      return NextResponse.json(
-        { error: `Only ${product.stock} left in stock` },
-        { status: 400 }
-      )
+    const stock = Number(product.stock)
+    const requestedTotal = (existing ? Number(existing.quantity) : 0) + quantity
+    if (requestedTotal > stock) {
+      return NextResponse.json({ error: `Only ${stock} left in stock` }, { status: 400 })
     }
 
     if (existing) {
-      await db.cartItem.update({
-        where: { id: existing.id },
-        data: { quantity: requestedTotal },
-      })
+      const { error } = await supabase
+        .from('cart_items')
+        .update({ quantity: requestedTotal })
+        .eq('id', existing.id)
+      if (error) {
+        console.error('POST /api/cart update error:', error.message)
+        return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+      }
     } else {
-      await db.cartItem.create({
-        data: { userId: user.id, productId, quantity },
-      })
+      const { error } = await supabase
+        .from('cart_items')
+        .insert({ user_id: user.id, product_id: productId, quantity })
+      if (error) {
+        console.error('POST /api/cart insert error:', error.message)
+        return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+      }
     }
 
-    return await buildCartResponse(user.id)
+    const payload: CartPayload = await fetchCartPayload(supabase, user.id)
+    return NextResponse.json(payload)
   } catch (err) {
+    if (isSchemaMissing(err as SchemaError)) return setupRequiredResponse()
     console.error('POST /api/cart error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
   }

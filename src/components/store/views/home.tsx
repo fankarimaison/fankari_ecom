@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
+  Database,
   HandHeart,
   Leaf,
   Search,
@@ -13,6 +14,7 @@ import {
 import {
   apiGet,
   categories,
+  isSetupRequired,
   productsUrl,
   type Product,
   type ProductListParams,
@@ -80,6 +82,7 @@ export function HomeView() {
       apiGet<{ products: Product[] }>(productsUrl({ featured: true })).then(
         (d) => d.products
       ),
+    retry: false, // fail fast so the Supabase setup banner appears immediately
   });
 
   const listParams = useMemo<ProductListParams>(
@@ -97,13 +100,60 @@ export function HomeView() {
       apiGet<{ products: Product[] }>(productsUrl(listParams)).then(
         (d) => d.products
       ),
+    retry: false, // fail fast so the Supabase setup banner appears immediately
   });
 
   const featuredProducts = (featured.data ?? []).slice(0, 4);
   const products = catalogue.data ?? [];
 
+  // Backend Setup guard: the Supabase schema hasn't been applied yet
+  // (503 { error, setupRequired: true }) — show the connect-database banner.
+  const setupRequired =
+    isSetupRequired(catalogue.error) || isSetupRequired(featured.error);
+
   return (
     <div>
+      {/* ----------------------- Setup required banner ----------------------- */}
+      {setupRequired && (
+        <section
+          aria-label="Database setup required"
+          className="border-b border-amber-200 bg-amber-50"
+        >
+          <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+            <div className="flex flex-col gap-3.5 sm:flex-row sm:items-start sm:gap-4">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-100 ring-1 ring-amber-300">
+                <Database className="size-5 text-amber-800" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <p className="font-display text-base font-semibold text-amber-900 sm:text-lg">
+                  Connect your Supabase database
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-amber-900/80">
+                  This store now runs on Supabase. Open your Supabase Dashboard
+                  → SQL Editor, paste the contents of{" "}
+                  <code className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[0.8em] text-amber-900 ring-1 ring-amber-200">
+                    supabase/schema.sql
+                  </code>{" "}
+                  (found in the project root), and press Run. The store, cart,
+                  accounts and admin panel will come alive immediately.
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-amber-900/70">
+                  The demo logins{" "}
+                  <span className="font-mono">
+                    admin@terrathread.com / admin123
+                  </span>{" "}
+                  and{" "}
+                  <span className="font-mono">
+                    customer@example.com / customer123
+                  </span>{" "}
+                  are created by the same script.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ------------------------------- Hero ------------------------------- */}
       <section className="bg-paper">
         <div className="mx-auto grid max-w-7xl items-center gap-8 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-2 lg:gap-14 lg:px-8 lg:py-20">

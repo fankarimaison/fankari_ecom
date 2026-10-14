@@ -1,35 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { FREE_SHIPPING_THRESHOLD, FLAT_SHIPPING, getSessionUser } from '@/lib/auth'
-
-// Unambiguous uppercase alphanumeric set (no 0/O, 1/I/L).
-const ORDER_NUMBER_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
-
-function generateOrderNumber(): string {
-  let suffix = ''
-  for (let i = 0; i < 6; i++) {
-    suffix += ORDER_NUMBER_CHARS[Math.floor(Math.random() * ORDER_NUMBER_CHARS.length)]
-  }
-  return `TT-${suffix}`
-}
-
-async function nextOrderNumber(): Promise<string> {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const candidate = generateOrderNumber()
-    const taken = await db.order.findUnique({ where: { orderNumber: candidate } })
-    if (!taken) return candidate
-  }
-  // Practically unreachable fallback, still unique-ish.
-  return `TT-${Date.now().toString(36).toUpperCase().slice(-6)}`
-}
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import {
+  mapOrder,
+  setupRequiredResponse,
+  type OrderDTO,
+  type OrderRow,
+} from '@/lib/dto'
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
-const round2 = (n: number) => Math.round(n * 100) / 100
 
-// POST /api/orders — checkout (transaction: validate stock → order + snapshot items → decrement stock → clear cart)
+// POST /api/orders — checkout via the atomic place_order RPC
 export async function POST(req: NextRequest) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to place an order' }, { status: 401 })
     }
@@ -53,73 +38,38 @@ export async function POST(req: NextRequest) {
     if (!address) return NextResponse.json({ error: 'Shipping address is required' }, { status: 400 })
     if (!city) return NextResponse.json({ error: 'City is required' }, { status: 400 })
 
-    const cartItems = await db.cartItem.findMany({
-      where: { userId: user.id },
-      include: { product: true },
-      orderBy: { createdAt: 'asc' },
-    })
-    if (cartItems.length === 0) {
-      return NextResponse.json({ error: 'Your cart is empty' }, { status: 400 })
-    }
-
-    for (const item of cartItems) {
-      if (item.quantity > item.product.stock) {
-        return NextResponse.json(
-          { error: `Only ${item.product.stock} left in stock for ${item.product.name}` },
-          { status: 400 }
-        )
-      }
-    }
-
-    const subtotal = round2(
-      cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
-    )
-    const shipping = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING
-    const total = round2(subtotal + shipping)
-    const orderNumber = await nextOrderNumber()
-
-    const order = await db.$transaction(async (tx) => {
-      const created = await tx.order.create({
-        data: {
-          orderNumber,
-          userId: user.id,
-          status: 'CONFIRMED',
-          subtotal,
-          shipping,
-          total,
-          customerName,
-          email,
-          phone: phone || null,
-          address,
-          city,
-          postalCode: postalCode || null,
-          notes: notes || null,
-          items: {
-            create: cartItems.map((item) => ({
-              productId: item.productId,
-              name: item.product.name,
-              price: item.product.price,
-              quantity: item.quantity,
-              image: item.product.image,
-            })),
-          },
-        },
-        include: { items: true },
-      })
-
-      for (const item of cartItems) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { decrement: item.quantity } },
-        })
-      }
-
-      await tx.cartItem.deleteMany({ where: { userId: user.id } })
-
-      return created
+    // Atomic: load cart → validate stock → create order + snapshot items →
+    // decrement stock → clear cart. Returns the camelCase order JSON directly.
+    const { data, error } = await supabase.rpc('place_order', {
+      p_customer_name: customerName,
+      p_email: email,
+      p_phone: phone,
+      p_address: address,
+      p_city: city,
+      p_postal_code: postalCode,
+      p_notes: notes,
     })
 
-    return NextResponse.json({ order }, { status: 201 })
+    if (error) {
+      if (isSchemaMissing(error)) return setupRequiredResponse()
+      const msg = error.message ?? ''
+      if (msg.includes('EMPTY_CART')) {
+        return NextResponse.json({ error: 'Your cart is empty' }, { status: 400 })
+      }
+      if (msg.startsWith('STOCK:')) {
+        // STOCK:<product name>:<stock left>
+        const match = /^STOCK:(.+):(\d+)$/.exec(msg)
+        const stock = match ? match[2] : '0'
+        return NextResponse.json({ error: `Only ${stock} left in stock` }, { status: 400 })
+      }
+      if (msg.includes('AUTH_REQUIRED')) {
+        return NextResponse.json({ error: 'Please sign in to place an order' }, { status: 401 })
+      }
+      console.error('POST /api/orders rpc error:', msg)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+
+    return NextResponse.json({ order: data as OrderDTO }, { status: 201 })
   } catch (err) {
     console.error('POST /api/orders error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
@@ -129,18 +79,24 @@ export async function POST(req: NextRequest) {
 // GET /api/orders — current user's orders, newest first
 export async function GET() {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to view your orders' }, { status: 401 })
     }
 
-    const orders = await db.order.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
-      include: { items: true },
-    })
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+    if (error) {
+      if (isSchemaMissing(error)) return setupRequiredResponse()
+      console.error('GET /api/orders query error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
 
-    return NextResponse.json({ orders })
+    return NextResponse.json({ orders: ((data ?? []) as OrderRow[]).map(mapOrder) })
   } catch (err) {
     console.error('GET /api/orders error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })

@@ -1,27 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import {
+  fetchCartPayload,
+  setupRequiredResponse,
+  UUID_RE,
+  type CartPayload,
+} from '@/lib/dto'
 
 type RouteContext = { params: Promise<{ id: string }> }
-
-const round2 = (n: number) => Math.round(n * 100) / 100
-
-/** Full refreshed cart payload, shared by every cart mutation response. */
-async function buildCartResponse(userId: string) {
-  const rows = await db.cartItem.findMany({
-    where: { userId },
-    orderBy: { createdAt: 'asc' },
-    include: { product: true },
-  })
-  const subtotal = round2(rows.reduce((sum, item) => sum + item.product.price * item.quantity, 0))
-  const count = rows.reduce((sum, item) => sum + item.quantity, 0)
-  return NextResponse.json({ items: rows, subtotal, count })
-}
+type SchemaError = { code?: string; message?: string }
 
 // PUT /api/cart/[id] { quantity } — quantity <= 0 removes the item
 export async function PUT(req: NextRequest, { params }: RouteContext) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to use your cart' }, { status: 401 })
     }
@@ -34,29 +28,49 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: 'Invalid quantity' }, { status: 400 })
     }
 
-    const item = await db.cartItem.findUnique({
-      where: { id },
-      include: { product: true },
-    })
-    if (!item || item.userId !== user.id) {
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: 'Cart item not found' }, { status: 404 })
+    }
+
+    const { data: item, error: fetchError } = await supabase
+      .from('cart_items')
+      .select('*, product:products(*)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchError) {
+      if (isSchemaMissing(fetchError)) return setupRequiredResponse()
+      console.error('PUT /api/cart/[id] fetch error:', fetchError.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+    if (!item || item.user_id !== user.id) {
       return NextResponse.json({ error: 'Cart item not found' }, { status: 404 })
     }
 
     if (quantity <= 0) {
-      await db.cartItem.delete({ where: { id } })
-      return await buildCartResponse(user.id)
+      const { error } = await supabase.from('cart_items').delete().eq('id', id)
+      if (error) {
+        console.error('PUT /api/cart/[id] delete error:', error.message)
+        return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+      }
+      const payload: CartPayload = await fetchCartPayload(supabase, user.id)
+      return NextResponse.json(payload)
     }
 
-    if (quantity > item.product.stock) {
-      return NextResponse.json(
-        { error: `Only ${item.product.stock} left in stock` },
-        { status: 400 }
-      )
+    const stock = Number(item.product?.stock ?? 0)
+    if (quantity > stock) {
+      return NextResponse.json({ error: `Only ${stock} left in stock` }, { status: 400 })
     }
 
-    await db.cartItem.update({ where: { id }, data: { quantity } })
-    return await buildCartResponse(user.id)
+    const { error } = await supabase.from('cart_items').update({ quantity }).eq('id', id)
+    if (error) {
+      console.error('PUT /api/cart/[id] update error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+
+    const payload: CartPayload = await fetchCartPayload(supabase, user.id)
+    return NextResponse.json(payload)
   } catch (err) {
+    if (isSchemaMissing(err as SchemaError)) return setupRequiredResponse()
     console.error('PUT /api/cart/[id] error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
   }
@@ -65,21 +79,42 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
 // DELETE /api/cart/[id]
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to use your cart' }, { status: 401 })
     }
 
     const { id } = await params
 
-    const item = await db.cartItem.findUnique({ where: { id } })
-    if (!item || item.userId !== user.id) {
+    if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: 'Cart item not found' }, { status: 404 })
     }
 
-    await db.cartItem.delete({ where: { id } })
-    return await buildCartResponse(user.id)
+    const { data: item, error: fetchError } = await supabase
+      .from('cart_items')
+      .select('id, user_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchError) {
+      if (isSchemaMissing(fetchError)) return setupRequiredResponse()
+      console.error('DELETE /api/cart/[id] fetch error:', fetchError.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+    if (!item || item.user_id !== user.id) {
+      return NextResponse.json({ error: 'Cart item not found' }, { status: 404 })
+    }
+
+    const { error } = await supabase.from('cart_items').delete().eq('id', id)
+    if (error) {
+      console.error('DELETE /api/cart/[id] delete error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+
+    const payload: CartPayload = await fetchCartPayload(supabase, user.id)
+    return NextResponse.json(payload)
   } catch (err) {
+    if (isSchemaMissing(err as SchemaError)) return setupRequiredResponse()
     console.error('DELETE /api/cart/[id] error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
   }

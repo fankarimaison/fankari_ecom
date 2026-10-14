@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import { setupRequiredResponse } from '@/lib/dto'
 
-/** Built-in defaults, merged under the SiteContent table rows (matches scripts/seed.ts). */
+type SchemaError = { code?: string; message?: string }
+
+/** Built-in defaults, merged under the site_content rows (matches schema.sql seed). */
 const DEFAULT_CONTENT: Record<string, string> = {
   brandName: 'Terra & Thread',
   announcement:
@@ -16,9 +19,12 @@ const DEFAULT_CONTENT: Record<string, string> = {
     'Every Terra & Thread bag begins as raw natural fibre — sturdy cotton canvas, rustic jute, buttery full-grain leather — and passes through the hands of skilled artisans who cut, stitch and finish each piece in small batches. We believe the things you carry every day should be beautiful, honest and built to age gracefully. No mass production, no shortcuts: just time-honoured craft and materials that get better with every year you carry them.',
 }
 
-async function mergedContent(): Promise<Record<string, string>> {
+async function mergedContent(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data, error } = await supabase.from('site_content').select('key,value')
+  if (error) throw error
+
   const content = { ...DEFAULT_CONTENT }
-  const rows = await db.siteContent.findMany()
+  const rows = (data ?? []) as { key: string; value: string }[]
   for (const row of rows) {
     content[row.key] = row.value
   }
@@ -28,9 +34,11 @@ async function mergedContent(): Promise<Record<string, string>> {
 // GET /api/content
 export async function GET() {
   try {
-    const content = await mergedContent()
+    const supabase = await createClient()
+    const content = await mergedContent(supabase)
     return NextResponse.json({ content })
   } catch (err) {
+    if (isSchemaMissing(err as SchemaError)) return setupRequiredResponse()
     console.error('GET /api/content error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
   }
@@ -39,7 +47,8 @@ export async function GET() {
 // PUT /api/content — ADMIN, upsert { key: value, ... }
 export async function PUT(req: NextRequest) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in' }, { status: 401 })
     }
@@ -62,17 +71,19 @@ export async function PUT(req: NextRequest) {
       )
     }
 
-    for (const [key, value] of entries) {
-      await db.siteContent.upsert({
-        where: { key },
-        update: { value },
-        create: { key, value },
-      })
+    const rows = entries.map(([key, value]) => ({ key, value }))
+    const { error } = await supabase
+      .from('site_content')
+      .upsert(rows, { onConflict: 'key' })
+    if (error) {
+      console.error('PUT /api/content upsert error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
     }
 
-    const content = await mergedContent()
+    const content = await mergedContent(supabase)
     return NextResponse.json({ content })
   } catch (err) {
+    if (isSchemaMissing(err as SchemaError)) return setupRequiredResponse()
     console.error('PUT /api/content error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
   }

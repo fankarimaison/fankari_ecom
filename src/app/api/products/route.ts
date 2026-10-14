@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import {
+  mapProduct,
+  setupRequiredResponse,
+  type ProductRow,
+} from '@/lib/dto'
 
 function slugify(name: string): string {
   return (
@@ -14,18 +19,6 @@ function slugify(name: string): string {
   )
 }
 
-async function uniqueSlug(name: string): Promise<string> {
-  const base = slugify(name)
-  let candidate = base
-  let suffix = 1
-  // Append a numeric suffix until the slug is free.
-  while (await db.product.findUnique({ where: { slug: candidate } })) {
-    suffix += 1
-    candidate = `${base}-${suffix}`
-  }
-  return candidate
-}
-
 // GET /api/products?category=Canvas&search=leather&featured=1&sort=new|price_asc|price_desc
 export async function GET(req: NextRequest) {
   try {
@@ -35,36 +28,46 @@ export async function GET(req: NextRequest) {
     const featured = searchParams.get('featured') ?? ''
     const sort = searchParams.get('sort') ?? 'new'
 
-    const products = await db.product.findMany({
-      where: {
-        active: true,
-        ...(featured === '1' ? { featured: true } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-    })
+    const supabase = await createClient()
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .eq('active', true)
+      .order('created_at', { ascending: false })
+    if (error) {
+      if (isSchemaMissing(error)) return setupRequiredResponse()
+      console.error('GET /api/products query error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
 
-    let result = products
+    // Catalog is small — category/search/featured/sort are applied in memory
+    // over the created_at-desc query, exactly like the previous implementation.
+    let products = ((data ?? []) as ProductRow[]).map(mapProduct)
+
+    if (featured === '1') {
+      products = products.filter((p) => p.featured)
+    }
 
     if (category) {
       const cat = category.toLowerCase()
-      result = result.filter((p) => p.category.toLowerCase() === cat)
+      products = products.filter((p) => p.category.toLowerCase() === cat)
     }
 
     if (search) {
       const q = search.toLowerCase()
-      result = result.filter(
+      products = products.filter(
         (p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
       )
     }
 
     if (sort === 'price_asc') {
-      result = [...result].sort((a, b) => a.price - b.price)
+      products = [...products].sort((a, b) => a.price - b.price)
     } else if (sort === 'price_desc') {
-      result = [...result].sort((a, b) => b.price - a.price)
+      products = [...products].sort((a, b) => b.price - a.price)
     }
-    // 'new' (default) keeps the createdAt desc order from the query.
+    // 'new' (default) keeps the created_at desc order from the query.
 
-    return NextResponse.json({ products: result })
+    return NextResponse.json({ products })
   } catch (err) {
     console.error('GET /api/products error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
@@ -74,7 +77,8 @@ export async function GET(req: NextRequest) {
 // POST /api/products — ADMIN
 export async function POST(req: NextRequest) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in' }, { status: 401 })
     }
@@ -106,19 +110,29 @@ export async function POST(req: NextRequest) {
     if (!image) return NextResponse.json({ error: 'Image is required' }, { status: 400 })
 
     const materials =
-      typeof body.materials === 'string' && body.materials.trim()
-        ? body.materials.trim()
-        : null
+      typeof body.materials === 'string' && body.materials.trim() ? body.materials.trim() : ''
     const dimensions =
-      typeof body.dimensions === 'string' && body.dimensions.trim()
-        ? body.dimensions.trim()
-        : null
+      typeof body.dimensions === 'string' && body.dimensions.trim() ? body.dimensions.trim() : ''
     const featured = body.featured === true
 
-    const slug = await uniqueSlug(name)
+    // Slug from the name, with -2, -3… suffixes on collision.
+    const base = slugify(name)
+    let slug = base
+    let suffix = 1
+    for (;;) {
+      const { data: taken } = await supabase
+        .from('products')
+        .select('id')
+        .eq('slug', slug)
+        .maybeSingle()
+      if (!taken) break
+      suffix += 1
+      slug = `${base}-${suffix}`
+    }
 
-    const product = await db.product.create({
-      data: {
+    const { data: inserted, error } = await supabase
+      .from('products')
+      .insert({
         name,
         slug,
         description,
@@ -130,10 +144,16 @@ export async function POST(req: NextRequest) {
         dimensions,
         featured,
         active: true,
-      },
-    })
+      })
+      .select('*')
+      .maybeSingle()
 
-    return NextResponse.json({ product }, { status: 201 })
+    if (error || !inserted) {
+      if (error) console.error('POST /api/products insert error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+
+    return NextResponse.json({ product: mapProduct(inserted as ProductRow) }, { status: 201 })
   } catch (err) {
     console.error('POST /api/products error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })

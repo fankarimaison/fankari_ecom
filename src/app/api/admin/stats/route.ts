@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import { setupRequiredResponse } from '@/lib/dto'
 
-// GET /api/admin/stats
+// GET /api/admin/stats — minimal column fetches, computed in JS
 export async function GET() {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in' }, { status: 401 })
     }
@@ -13,26 +15,36 @@ export async function GET() {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
-    const [revenueAgg, ordersCount, customersCount, productsCount, lowStockCount, pendingCount] =
-      await Promise.all([
-        db.order.aggregate({
-          _sum: { total: true },
-          where: { status: { not: 'CANCELLED' } },
-        }),
-        db.order.count(),
-        db.user.count({ where: { role: 'CUSTOMER' } }),
-        db.product.count(),
-        db.product.count({ where: { active: true, stock: { lte: 5 } } }),
-        db.order.count({ where: { status: { in: ['PENDING', 'CONFIRMED'] } } }),
-      ])
+    const [ordersRes, profilesRes, productsRes] = await Promise.all([
+      supabase.from('orders').select('total,status'),
+      supabase.from('profiles').select('role'),
+      supabase.from('products').select('stock,active'),
+    ])
+
+    for (const res of [ordersRes, profilesRes, productsRes]) {
+      if (res.error) {
+        if (isSchemaMissing(res.error)) return setupRequiredResponse()
+        console.error('GET /api/admin/stats query error:', res.error.message)
+        return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+      }
+    }
+
+    const orders = (ordersRes.data ?? []) as { total: number | string; status: string }[]
+    const profiles = (profilesRes.data ?? []) as { role: string }[]
+    const products = (productsRes.data ?? []) as { stock: number | string; active: boolean }[]
 
     const stats = {
-      revenue: revenueAgg._sum.total ?? 0,
-      orders: ordersCount,
-      customers: customersCount,
-      products: productsCount,
-      lowStock: lowStockCount,
-      pending: pendingCount,
+      revenue:
+        Math.round(
+          orders
+            .filter((o) => o.status !== 'CANCELLED')
+            .reduce((sum, o) => sum + Number(o.total), 0) * 100
+        ) / 100,
+      orders: orders.length,
+      customers: profiles.filter((p) => p.role === 'CUSTOMER').length,
+      products: products.length,
+      lowStock: products.filter((p) => p.active && Number(p.stock) <= 5).length,
+      pending: orders.filter((o) => o.status === 'PENDING' || o.status === 'CONFIRMED').length,
     }
 
     return NextResponse.json({ stats })

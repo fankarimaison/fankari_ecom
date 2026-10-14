@@ -1,28 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import { mapOrder, setupRequiredResponse, UUID_RE } from '@/lib/dto'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
-// GET /api/orders/[id] — owner or ADMIN
+// GET /api/orders/[id] — RLS hides other users' orders, so "unknown" and
+// "not yours" are both a plain 404 (no information leak).
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to view your orders' }, { status: 401 })
     }
 
     const { id } = await params
-    const order = await db.order.findUnique({ where: { id }, include: { items: true } })
-    if (!order) {
+    if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 })
     }
 
-    if (order.userId !== user.id && user.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) {
+      if (isSchemaMissing(error)) return setupRequiredResponse()
+      console.error('GET /api/orders/[id] query error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
     }
 
-    return NextResponse.json({ order })
+    if (!data) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+    }
+
+    return NextResponse.json({ order: mapOrder(data) })
   } catch (err) {
     console.error('GET /api/orders/[id] error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })

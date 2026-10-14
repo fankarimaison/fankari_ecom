@@ -1,22 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
+import { getSessionUser, isSchemaMissing } from '@/lib/auth'
+import {
+  mapProduct,
+  setupRequiredResponse,
+  UUID_RE,
+  type ProductRow,
+} from '@/lib/dto'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
-// GET /api/products/[id] — id may be a Prisma id OR a slug (active only)
+// GET /api/products/[id] — id may be a uuid OR a slug
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
+    const supabase = await createClient()
 
-    const product = await db.product.findFirst({
-      where: { active: true, OR: [{ id }, { slug: id }] },
-    })
-    if (!product) {
+    // Admins may fetch inactive products; everyone else only sees active ones.
+    const session = await getSessionUser(supabase)
+    const isAdmin = session?.role === 'ADMIN'
+
+    // uuid → match id or slug; anything else would break a uuid cast, so it
+    // can only ever be a slug. Slugs are generated from [a-z0-9-] only —
+    // anything else can't exist in the table, so answer 404 without querying
+    // (also protects the .or() filter from PostgREST syntax injection).
+    const isUuid = UUID_RE.test(id)
+    if (!isUuid && !/^[A-Za-z0-9_-]+$/.test(id)) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+    }
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .or(isUuid ? `id.eq.${id},slug.eq.${id}` : `slug.eq.${id}`)
+      .maybeSingle()
+    if (error) {
+      if (isSchemaMissing(error)) return setupRequiredResponse()
+      console.error('GET /api/products/[id] query error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+
+    const product = data as ProductRow | null
+    if (!product || (!isAdmin && !product.active)) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    return NextResponse.json({ product })
+    return NextResponse.json({ product: mapProduct(product) })
   } catch (err) {
     console.error('GET /api/products/[id] error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
@@ -26,7 +54,8 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 // PUT /api/products/[id] — ADMIN, partial update
 export async function PUT(req: NextRequest, { params }: RouteContext) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in' }, { status: 401 })
     }
@@ -35,7 +64,20 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
     }
 
     const { id } = await params
-    const existing = await db.product.findUnique({ where: { id } })
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from('products')
+      .select('id')
+      .eq('id', id)
+      .maybeSingle()
+    if (existingError) {
+      if (isSchemaMissing(existingError)) return setupRequiredResponse()
+      console.error('PUT /api/products/[id] fetch error:', existingError.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
     if (!existing) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
@@ -90,13 +132,13 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
       data.materials =
         typeof body.materials === 'string' && body.materials.trim()
           ? body.materials.trim()
-          : null
+          : ''
     }
     if (body.dimensions !== undefined) {
       data.dimensions =
         typeof body.dimensions === 'string' && body.dimensions.trim()
           ? body.dimensions.trim()
-          : null
+          : ''
     }
     if (body.featured !== undefined) {
       data.featured = body.featured === true
@@ -105,19 +147,50 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
       data.active = body.active === true
     }
 
-    const product = await db.product.update({ where: { id }, data })
+    // Empty partial → no-op update, return the current row (old behavior).
+    if (Object.keys(data).length === 0) {
+      const { data: current, error: currentError } = await supabase
+        .from('products')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle()
+      if (currentError) {
+        console.error('PUT /api/products/[id] fetch error:', currentError.message)
+        return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+      }
+      if (!current) {
+        return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+      }
+      return NextResponse.json({ product: mapProduct(current as ProductRow) })
+    }
 
-    return NextResponse.json({ product })
+    const { data: updated, error: updateError } = await supabase
+      .from('products')
+      .update(data)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle()
+
+    if (updateError) {
+      console.error('PUT /api/products/[id] update error:', updateError.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
+    if (!updated) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+    }
+
+    return NextResponse.json({ product: mapProduct(updated as ProductRow) })
   } catch (err) {
     console.error('PUT /api/products/[id] error:', err)
     return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
   }
 }
 
-// DELETE /api/products/[id] — ADMIN
+// DELETE /api/products/[id] — ADMIN (cart rows cascade; order items keep snapshots)
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   try {
-    const user = await getSessionUser()
+    const supabase = await createClient()
+    const user = await getSessionUser(supabase)
     if (!user) {
       return NextResponse.json({ error: 'Please sign in' }, { status: 401 })
     }
@@ -126,12 +199,29 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext) {
     }
 
     const { id } = await params
-    const existing = await db.product.findUnique({ where: { id } })
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from('products')
+      .select('id')
+      .eq('id', id)
+      .maybeSingle()
+    if (existingError) {
+      if (isSchemaMissing(existingError)) return setupRequiredResponse()
+      console.error('DELETE /api/products/[id] fetch error:', existingError.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
     if (!existing) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 })
     }
 
-    await db.product.delete({ where: { id } })
+    const { error } = await supabase.from('products').delete().eq('id', id)
+    if (error) {
+      console.error('DELETE /api/products/[id] delete error:', error.message)
+      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 })
+    }
 
     return NextResponse.json({ success: true })
   } catch (err) {
