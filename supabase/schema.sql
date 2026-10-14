@@ -532,28 +532,74 @@ where not exists (
   select 1 from auth.users where email = 'customer@example.com'
 );
 
--- Matching auth.identities rows (needed for a fully valid auth user)
-insert into auth.identities (user_id, provider_id, provider, identity_id, identity_data, last_sign_in_at, created_at, updated_at)
-select
-  '11111111-1111-1111-1111-111111111111', 'email', 'email',
-  '11111111-1111-1111-1111-111111111111',
-  '{"sub":"11111111-1111-1111-1111-111111111111","email":"admin@terrathread.com","email_verified":true}',
-  now(), now(), now()
-where not exists (
-  select 1 from auth.identities
-  where provider_id = 'email' and identity_id = '11111111-1111-1111-1111-111111111111'
-);
+-- Matching auth.identities rows (needed for a fully valid auth user).
+--
+-- The auth.identities schema varies across GoTrue versions: some projects have
+-- (provider_id, identity_id, identity_data), newer ones dropped `identity_id`,
+-- very old ones lack `identity_data`. Detect the actual columns at runtime and
+-- insert only what exists, so this works everywhere.
+do $$
+declare
+  u                 record;
+  has_provider_id   boolean;
+  has_identity_id   boolean;
+  has_identity_data boolean;
+begin
+  select
+    exists (select 1 from information_schema.columns
+            where table_schema = 'auth' and table_name = 'identities' and column_name = 'provider_id'),
+    exists (select 1 from information_schema.columns
+            where table_schema = 'auth' and table_name = 'identities' and column_name = 'identity_id'),
+    exists (select 1 from information_schema.columns
+            where table_schema = 'auth' and table_name = 'identities' and column_name = 'identity_data')
+  into has_provider_id, has_identity_id, has_identity_data;
 
-insert into auth.identities (user_id, provider_id, provider, identity_id, identity_data, last_sign_in_at, created_at, updated_at)
-select
-  '22222222-2222-2222-2222-222222222222', 'email', 'email',
-  '22222222-2222-2222-2222-222222222222',
-  '{"sub":"22222222-2222-2222-2222-222222222222","email":"customer@example.com","email_verified":true}',
-  now(), now(), now()
-where not exists (
-  select 1 from auth.identities
-  where provider_id = 'email' and identity_id = '22222222-2222-2222-2222-222222222222'
-);
+  for u in
+    select w.id, w.email
+    from auth.users w
+    where w.email in ('admin@terrathread.com', 'customer@example.com')
+      and not exists (
+        select 1 from auth.identities i
+        where i.user_id = w.id and i.provider = 'email'
+      )
+  loop
+    if has_identity_id and has_identity_data then
+      -- Modern schema: provider_id identifies the provider, identity_id the
+      -- identity row, identity_data carries the provider payload.
+      insert into auth.identities
+        (user_id, provider_id, provider, identity_id, identity_data, last_sign_in_at, created_at, updated_at)
+      values (
+        u.id, 'email', 'email', u.id::text,
+        jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
+        now(), now(), now()
+      );
+    elsif has_identity_id then
+      -- Modern schema before identity_data existed.
+      insert into auth.identities
+        (user_id, provider_id, provider, identity_id, last_sign_in_at, created_at, updated_at)
+      values (u.id, 'email', 'email', u.id::text, now(), now(), now());
+    elsif has_provider_id and has_identity_data then
+      -- Newer schema with identity_id dropped.
+      insert into auth.identities
+        (user_id, provider_id, provider, identity_data, last_sign_in_at, created_at, updated_at)
+      values (
+        u.id, 'email', 'email',
+        jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
+        now(), now(), now()
+      );
+    elsif has_provider_id then
+      -- Legacy schema: provider_id held the external identity id.
+      insert into auth.identities
+        (user_id, provider_id, provider, last_sign_in_at, created_at, updated_at)
+      values (u.id, u.id::text, 'email', now(), now(), now());
+    else
+      -- Minimal fallback.
+      insert into auth.identities
+        (user_id, provider, last_sign_in_at, created_at, updated_at)
+      values (u.id, 'email', now(), now(), now());
+    end if;
+  end loop;
+end $$;
 
 -- Make sure passwords/confirmation are correct even if the users already existed
 update auth.users

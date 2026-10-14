@@ -167,3 +167,17 @@ Work Log:
 
 Stage Summary:
 - schema.sql fixed — user must re-run the updated script in SQL Editor (safe even if first run partially applied)
+
+---
+Task ID: 6-fix-2
+Agent: orchestrator (main)
+Task: Fix 42703 (auth.identities has no identity_id) + validate entire schema.sql locally
+
+Work Log:
+- User reported 42703 at the identities insert — their project's GoTrue no longer has the identity_id column (schema changed recently); also confirmed the SQL Editor rolls back the WHOLE script on error (products API still 503 after failed run 2, so nothing was applied)
+- Rewrote identities seeding as a schema-adaptive DO block: detects provider_id/identity_id/identity_data via information_schema and inserts per variant (modern full / pre-identity_data / identity_id-dropped / legacy / minimal); guard = not exists (user_id, provider='email')
+- Built a full local validation harness with PGlite (/home/z/pgtest/validate.ts): mocked auth schema incl. the PARTIAL unique email index on auth.users, Supabase roles (anon/authenticated/service_role), auth.uid() stub via GUC, pgcrypto stubs
+- Ran the ENTIRE schema.sql against both GoTrue variants (identity_id present & absent): 24/24 checks passed on each — script executes, seeds (10 products/7 content/2 users+profiles+identities), place_order atomic flow (free shipping, snapshots, stock decrement, cart clear), EMPTY_CART + STOCK error tokens, admin_cancel_order (FORBIDDEN/CANCELLED+restock/ALREADY_CANCELLED), signup trigger, idempotent re-run
+
+Stage Summary:
+- schema.sql now validated end-to-end on a real Postgres engine for BOTH GoTrue schema variants; user re-runs the full updated script (whole-script rollback means nothing partial exists)
