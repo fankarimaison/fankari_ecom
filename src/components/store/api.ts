@@ -146,6 +146,7 @@ export type OrderStatus =
   | "PENDING"
   | "CONFIRMED"
   | "SHIPPED"
+  | "OUT_FOR_DELIVERY"
   | "DELIVERED"
   | "CANCELLED";
 
@@ -167,7 +168,37 @@ export interface Order {
   postalCode: string | null;
   notes: string | null;
   createdAt: string;
+  courierName: string;
+  trackingNumber: string;
+  trackingUrl: string;
+  /** YYYY-MM-DD */
+  estimatedDelivery: string | null;
   items: OrderItem[];
+  /** oldest first */
+  events: OrderEvent[];
+}
+
+export interface OrderEvent {
+  id: string;
+  status: OrderStatus | string;
+  note: string;
+  createdAt: string;
+}
+
+/** Public tracking result (POST /api/track) — no address or phone. */
+export interface TrackedOrder {
+  orderNumber: string;
+  status: OrderStatus | string;
+  createdAt: string;
+  total: number;
+  paymentMethod: string;
+  city: string;
+  courierName: string;
+  trackingNumber: string;
+  trackingUrl: string;
+  estimatedDelivery: string | null;
+  items: { name: string; quantity: number; image: string }[];
+  events: OrderEvent[];
 }
 
 export interface AdminOrder extends Order {

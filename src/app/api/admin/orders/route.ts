@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getSessionUser, isSchemaMissing } from '@/lib/auth'
 import {
+  ADMIN_ORDER_SELECT,
   mapAdminOrder,
   setupRequiredResponse,
   type AdminOrderRow,
@@ -21,7 +22,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('orders')
-      .select('*, items:order_items(*), user:profiles(name,email)')
+      .select(ADMIN_ORDER_SELECT)
       .order('created_at', { ascending: false })
     if (error) {
       if (isSchemaMissing(error)) return setupRequiredResponse()

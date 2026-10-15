@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getSessionUser, isSchemaMissing } from '@/lib/auth'
-import { mapOrder, setupRequiredResponse, UUID_RE } from '@/lib/dto'
+import { mapOrder, ORDER_SELECT, setupRequiredResponse, UUID_RE } from '@/lib/dto'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -22,7 +22,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 
     const { data, error } = await supabase
       .from('orders')
-      .select('*, items:order_items(*)')
+      .select(ORDER_SELECT)
       .eq('id', id)
       .maybeSingle()
     if (error) {

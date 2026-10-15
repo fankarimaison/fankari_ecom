@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { statusLabel } from "@/lib/format";
 import {
   apiDelete,
   apiGet,
@@ -138,28 +139,41 @@ export function useAdminProductMutations() {
   return { create, update, remove };
 }
 
+/** Fields an admin can change on an order; status changes and notes join the timeline. */
+export interface AdminOrderPatch {
+  status?: string;
+  courierName?: string;
+  trackingNumber?: string;
+  trackingUrl?: string;
+  /** YYYY-MM-DD, or null to clear */
+  estimatedDelivery?: string | null;
+  note?: string;
+}
+
 export function useAdminOrderStatusMutation() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const data = await apiPatch<{ order: AdminOrder }>(`/api/admin/orders/${id}`, {
-        status,
-      });
+    mutationFn: async ({ id, ...patch }: { id: string } & AdminOrderPatch) => {
+      const data = await apiPatch<{ order: AdminOrder }>(`/api/admin/orders/${id}`, patch);
       return data.order;
     },
-    onSuccess: (order) => {
+    onSuccess: (order, patch) => {
       void queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
       void queryClient.invalidateQueries({ queryKey: ["admin-stats"] });
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["track"] });
       toast({
-        title: `Order ${order.orderNumber} → ${order.status}`,
+        title:
+          patch.status !== undefined && Object.keys(patch).length === 1
+            ? `Order ${order.orderNumber} → ${statusLabel(String(order.status))}`
+            : `Order ${order.orderNumber} updated`,
       });
     },
     onError: (error) => {
       toast({
-        title: "Could not update status",
+        title: "Could not update order",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });

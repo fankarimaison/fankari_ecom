@@ -5,6 +5,7 @@ import { CheckCircle2, PackageSearch } from "lucide-react";
 import { apiGet, type Order } from "../api";
 import { formatDate, formatPrice, statusBadgeClass, statusLabel } from "@/lib/format";
 import { PriceSummary } from "../price-summary";
+import { OrderTracking } from "../order-tracking";
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +22,8 @@ export function OrderSuccessView({ orderId }: { orderId: string }) {
       const data = await apiGet<{ order: Order }>(`/api/orders/${orderId}`);
       return data.order;
     },
-    staleTime: Infinity,
+    // refetch so delivery updates from the studio show up
+    staleTime: 30_000,
   });
 
   if (isLoading) {
@@ -87,9 +89,21 @@ export function OrderSuccessView({ orderId }: { orderId: string }) {
             {statusLabel(String(order.status))}
           </Badge>
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Keep your order number — you can track delivery any time from “Track order”.
+        </p>
       </div>
 
       <Card className="mt-8">
+        <CardHeader>
+          <CardTitle className="font-display text-lg">Delivery tracking</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <OrderTracking order={order} />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
         <CardHeader>
           <CardTitle className="font-display text-lg">Order summary</CardTitle>
           <p className="text-xs text-muted-foreground">
@@ -137,6 +151,16 @@ export function OrderSuccessView({ orderId }: { orderId: string }) {
       </Card>
 
       <div className="mt-8 flex flex-wrap justify-center gap-3">
+        <Button
+          size="lg"
+          variant="outline"
+          className="min-h-12 rounded-full px-7"
+          onClick={() =>
+            navigate({ name: "track", orderNumber: order.orderNumber, email: order.email })
+          }
+        >
+          Track this order
+        </Button>
         <Button
           size="lg"
           variant="outline"

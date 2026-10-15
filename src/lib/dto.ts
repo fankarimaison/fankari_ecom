@@ -83,7 +83,21 @@ export interface OrderDTO {
   postalCode: string
   notes: string
   createdAt: string
+  courierName: string
+  trackingNumber: string
+  trackingUrl: string
+  /** YYYY-MM-DD */
+  estimatedDelivery: string | null
   items: OrderItemDTO[]
+  /** oldest first */
+  events: OrderEventDTO[]
+}
+
+export interface OrderEventDTO {
+  id: string
+  status: string
+  note: string
+  createdAt: string
 }
 
 export interface AdminOrderDTO extends OrderDTO {
@@ -153,7 +167,19 @@ export interface OrderRow {
   postal_code: string
   notes: string
   created_at: string
+  courier_name?: string | null
+  tracking_number?: string | null
+  tracking_url?: string | null
+  estimated_delivery?: string | null
   items?: OrderItemRow[] | null
+  events?: OrderEventRow[] | null
+}
+
+export interface OrderEventRow {
+  id: string
+  status: string
+  note: string | null
+  created_at: string
 }
 
 export interface AdminOrderRow extends OrderRow {
@@ -250,9 +276,29 @@ export function mapOrder(row: OrderRow): OrderDTO {
     postalCode: row.postal_code,
     notes: row.notes,
     createdAt: row.created_at,
+    courierName: row.courier_name ?? '',
+    trackingNumber: row.tracking_number ?? '',
+    trackingUrl: row.tracking_url ?? '',
+    estimatedDelivery: row.estimated_delivery ?? null,
     items: (row.items ?? []).map(mapOrderItem),
+    events: (row.events ?? [])
+      .map((e) => ({ id: e.id, status: e.status, note: e.note ?? '', createdAt: e.created_at }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
   }
 }
+
+/** Embed used by every order read: line items + timeline. */
+export const ORDER_SELECT = '*, items:order_items(*), events:order_events(*)'
+export const ADMIN_ORDER_SELECT = `${ORDER_SELECT}, user:profiles(name,email)`
+
+export const ORDER_STATUSES = [
+  'PENDING',
+  'CONFIRMED',
+  'SHIPPED',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+  'CANCELLED',
+] as const
 
 export function mapAdminOrder(row: AdminOrderRow): AdminOrderDTO {
   return {

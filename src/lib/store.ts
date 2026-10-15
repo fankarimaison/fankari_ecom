@@ -14,6 +14,8 @@ export type View =
   | { name: "checkout" }
   | { name: "order-success"; orderId: string }
   | { name: "account" }
+  /** public order tracking; prefilled values look the order up immediately */
+  | { name: "track"; orderNumber?: string; email?: string }
   | {
       name: "admin";
       tab?: "dashboard" | "products" | "inventory" | "orders" | "shipping" | "content";

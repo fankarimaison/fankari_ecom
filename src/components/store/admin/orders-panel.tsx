@@ -6,6 +6,8 @@ import { formatDate, formatPrice, statusBadgeClass, statusLabel } from "@/lib/fo
 import { priceSummaryText } from "../price-summary";
 import { useAdminOrderStatusMutation, useAdminOrders } from "./use-admin";
 import { PanelLoading } from "../views/admin";
+import { DeliveryForm, ORDER_STATUSES, ShipDialog } from "./delivery-form";
+import type { AdminOrder } from "../api";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -23,12 +25,13 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
-const STATUSES = ["PENDING", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
 
 export function AdminOrders() {
   const { data: orders, isLoading } = useAdminOrders();
   const setStatus = useAdminOrderStatusMutation();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Shipped / Out for delivery picked in the table → ask for tracking details first
+  const [shipping, setShipping] = useState<{ order: AdminOrder; status: string } | null>(null);
 
   if (isLoading) return <PanelLoading />;
 
@@ -115,8 +118,12 @@ export function AdminOrders() {
                       </Badge>
                       <Select
                         value={String(o.status)}
-                        onValueChange={(v) => setStatus.mutate({ id: o.id, status: v })}
-                        disabled={setStatus.isPending}
+                        onValueChange={(v) =>
+                          v === "SHIPPED" || v === "OUT_FOR_DELIVERY"
+                            ? setShipping({ order: o, status: v })
+                            : setStatus.mutate({ id: o.id, status: v })
+                        }
+                        disabled={setStatus.isPending || o.status === "CANCELLED"}
                       >
                         <SelectTrigger
                           size="sm"
@@ -126,7 +133,7 @@ export function AdminOrders() {
                           {statusLabel(String(o.status))}
                         </SelectTrigger>
                         <SelectContent>
-                          {STATUSES.map((s) => (
+                          {ORDER_STATUSES.map((s) => (
                             <SelectItem key={s} value={s}>
                               {statusLabel(s)}
                             </SelectItem>
@@ -201,10 +208,24 @@ export function AdminOrders() {
                     </p>
                   </div>
                 </div>
+                <div className="mt-4">
+                  {/* remount after each save so the form shows the saved values */}
+                  <DeliveryForm
+                    key={`${o.id}:${o.events.length}:${o.status}:${o.courierName}:${o.trackingNumber}:${o.trackingUrl}:${o.estimatedDelivery}`}
+                    order={o}
+                  />
+                </div>
               </div>
             ))}
         </div>
       )}
+
+      <ShipDialog
+        key={shipping ? `${shipping.order.id}:${shipping.status}` : "none"}
+        order={shipping?.order ?? null}
+        status={shipping?.status ?? "SHIPPED"}
+        onClose={() => setShipping(null)}
+      />
     </div>
   );
 }

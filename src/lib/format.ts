@@ -17,6 +17,11 @@ export function formatDate(value: string | Date): string {
   return format(new Date(value), "MMM d, yyyy");
 }
 
+/** Format an ISO timestamp as "Jan 3, 2025 · 4:05 PM" */
+export function formatDateTime(value: string | Date): string {
+  return format(new Date(value), "MMM d, yyyy · h:mm a");
+}
+
 /** Human label for an order status. */
 export function statusLabel(status: string): string {
   switch (status) {
@@ -26,6 +31,8 @@ export function statusLabel(status: string): string {
       return "Confirmed";
     case "SHIPPED":
       return "Shipped";
+    case "OUT_FOR_DELIVERY":
+      return "Out for delivery";
     case "DELIVERED":
       return "Delivered";
     case "CANCELLED":
@@ -42,6 +49,8 @@ export function statusBadgeClass(status: string): string {
       return "bg-amber-100 text-amber-800 border-amber-200";
     case "SHIPPED":
       return "bg-orange-100 text-orange-800 border-orange-200";
+    case "OUT_FOR_DELIVERY":
+      return "bg-yellow-100 text-yellow-900 border-yellow-200";
     case "DELIVERED":
       return "bg-lime-100 text-lime-800 border-lime-200";
     case "CANCELLED":

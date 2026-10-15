@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getSessionUser, isSchemaMissing } from '@/lib/auth'
 import {
   mapOrder,
+  ORDER_SELECT,
   setupRequiredResponse,
   type OrderDTO,
   type OrderRow,
@@ -94,7 +95,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('orders')
-      .select('*, items:order_items(*)')
+      .select(ORDER_SELECT)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
     if (error) {

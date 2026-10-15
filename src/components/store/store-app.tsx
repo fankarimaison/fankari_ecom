@@ -12,6 +12,7 @@ import { CartView } from "./views/cart-view";
 import { CheckoutView } from "./views/checkout";
 import { OrderSuccessView } from "./views/order-success";
 import { AccountView } from "./views/account";
+import { TrackView } from "./views/track";
 import { AdminView } from "./views/admin";
 
 /**
@@ -68,6 +69,8 @@ function ViewSwitch({ view }: { view: View }) {
       return <OrderSuccessView orderId={view.orderId} />;
     case "account":
       return <AccountView />;
+    case "track":
+      return <TrackView key={view.orderNumber ?? ""} orderNumber={view.orderNumber} email={view.email} />;
     case "admin":
       return <AdminView tab={view.tab} />;
     default:

@@ -21,6 +21,7 @@ import {
 } from "../api";
 import { useMe } from "../hooks";
 import { priceSummaryText } from "../price-summary";
+import { OrderTracking } from "../order-tracking";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -142,6 +143,7 @@ function SignedIn({ user }: { user: User }) {
 }
 
 function OrderHistory() {
+  const navigate = useStore((s) => s.navigate);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const { data: orders, isLoading } = useQuery({
@@ -257,6 +259,18 @@ function OrderHistory() {
                           {priceSummaryText(order)} · Total {formatPrice(order.total)}
                         </p>
                       </div>
+                      <div className="mt-4 rounded-lg border border-border/70 bg-card p-4">
+                        <p className="mb-3 text-sm font-semibold">Delivery tracking</p>
+                        <OrderTracking order={order} />
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3 min-h-9 rounded-full"
+                        onClick={() => navigate({ name: "order-success", orderId: order.id })}
+                      >
+                        Open order page
+                      </Button>
                     </div>
                   )}
                 </Card>

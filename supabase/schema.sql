@@ -64,7 +64,8 @@ create table if not exists public.orders (
   user_id       text not null references public.profiles (id) on delete cascade,
   order_number  text not null unique,
   status        text not null default 'CONFIRMED'
-                check (status in ('PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED')),
+                constraint orders_status_check check (status in (
+                  'PENDING', 'CONFIRMED', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED')),
   subtotal      numeric(10, 2) not null default 0,
   shipping      numeric(10, 2) not null default 0,
   total         numeric(10, 2) not null default 0,
@@ -118,6 +119,33 @@ alter table public.order_items
   add column if not exists discount_percent numeric(5, 2) not null default 0,
   add column if not exists vat_rate         numeric(5, 2) not null default 0;
 
+-- Delivery tracking (set by admins in Admin → Orders; shown on the public
+-- Track order page). OUT_FOR_DELIVERY joins the status list.
+alter table public.orders
+  add column if not exists courier_name       text not null default '',
+  add column if not exists tracking_number    text not null default '',
+  add column if not exists tracking_url       text not null default '',
+  add column if not exists estimated_delivery date;
+
+alter table public.orders drop constraint if exists orders_status_check;
+alter table public.orders add constraint orders_status_check check (status in (
+  'PENDING', 'CONFIRMED', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'));
+
+-- Order timeline: one row per status change or admin note
+create table if not exists public.order_events (
+  id         uuid primary key default gen_random_uuid(),
+  order_id   uuid not null references public.orders (id) on delete cascade,
+  status     text not null,
+  note       text not null default '',
+  created_at timestamptz not null default now()
+);
+
+-- Orders placed before the timeline existed start with their creation event
+insert into public.order_events (order_id, status, created_at)
+select o.id, 'CONFIRMED', o.created_at
+from public.orders o
+where not exists (select 1 from public.order_events e where e.order_id = o.id);
+
 -- Migration from Supabase Auth → Clerk (runs once, only on databases created by
 -- earlier versions of this script, where user ids were auth.users uuids).
 -- Supabase Auth accounts cannot sign in through Clerk, so their profiles are
@@ -166,6 +194,8 @@ create index if not exists idx_cart_items_user     on public.cart_items (user_id
 create index if not exists idx_orders_user         on public.orders (user_id);
 create index if not exists idx_orders_created      on public.orders (created_at desc);
 create index if not exists idx_order_items_order   on public.order_items (order_id);
+create index if not exists idx_order_events_order  on public.order_events (order_id, created_at);
+create index if not exists idx_orders_number_lower on public.orders (lower(order_number));
 
 -- ============================================================================
 -- 2. Helper functions — identity comes from the Clerk session token
@@ -236,6 +266,7 @@ alter table public.cart_items   enable row level security;
 alter table public.orders       enable row level security;
 alter table public.order_items  enable row level security;
 alter table public.site_content enable row level security;
+alter table public.order_events enable row level security;
 
 -- profiles: users read their own, admins read everyone (no client writes —
 -- rows are written only by public.sync_profile())
@@ -308,6 +339,21 @@ create policy "order_items_insert" on public.order_items
       where o.id = order_id and o.user_id = public.current_user_id()
     )
   );
+
+-- order_events: readable with the parent order; admins add entries (status
+-- changes / notes). Visitors read them through track_order() instead.
+drop policy if exists "order_events_select" on public.order_events;
+create policy "order_events_select" on public.order_events
+  for select using (
+    exists (
+      select 1 from public.orders o
+      where o.id = order_id and (o.user_id = public.current_user_id() or public.is_admin())
+    )
+  );
+
+drop policy if exists "order_events_insert" on public.order_events;
+create policy "order_events_insert" on public.order_events
+  for insert with check (public.is_admin());
 
 -- site_content: world-readable, admin-writable
 drop policy if exists "content_select" on public.site_content;
@@ -486,6 +532,9 @@ begin
   join public.products p on p.id = ci.product_id
   where ci.user_id = v_user;
 
+  -- Start the order timeline
+  insert into public.order_events (order_id, status) values (v_order_id, 'CONFIRMED');
+
   -- Decrement stock
   update public.products p
   set stock = p.stock - ci.quantity
@@ -525,7 +574,10 @@ $$;
 --    Errors: FORBIDDEN / NOT_FOUND / ALREADY_CANCELLED
 -- ============================================================================
 
-create or replace function public.admin_cancel_order(p_order_id uuid)
+-- Earlier signature had no note; drop it so the RPC stays unambiguous
+drop function if exists public.admin_cancel_order(uuid);
+
+create or replace function public.admin_cancel_order(p_order_id uuid, p_note text default '')
 returns jsonb
 language plpgsql security definer
 set search_path = public
@@ -546,6 +598,8 @@ begin
   end if;
 
   update public.orders set status = 'CANCELLED' where id = p_order_id;
+  insert into public.order_events (order_id, status, note)
+  values (p_order_id, 'CANCELLED', coalesce(p_note, ''));
 
   update public.products p
   set stock = p.stock + oi.quantity
@@ -579,6 +633,50 @@ begin
   );
 end;
 $$;
+
+-- ============================================================================
+-- 6b. Public order tracking — anyone with the order number AND the email used
+--     at checkout can see delivery progress. Returns only what a tracking
+--     page needs (no street address or phone); null when nothing matches.
+-- ============================================================================
+
+create or replace function public.track_order(p_order_number text, p_email text)
+returns jsonb
+language sql stable security definer
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'orderNumber', o.order_number,
+    'status', o.status,
+    'createdAt', o.created_at,
+    'total', o.total,
+    'paymentMethod', o.payment_method,
+    'city', o.city,
+    'courierName', o.courier_name,
+    'trackingNumber', o.tracking_number,
+    'trackingUrl', o.tracking_url,
+    'estimatedDelivery', o.estimated_delivery,
+    'items', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'name', oi.name, 'quantity', oi.quantity, 'image', oi.image
+      ) order by oi.id), '[]'::jsonb)
+      from public.order_items oi where oi.order_id = o.id
+    ),
+    'events', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', e.id, 'status', e.status, 'note', e.note, 'createdAt', e.created_at
+      ) order by e.created_at), '[]'::jsonb)
+      from public.order_events e where e.order_id = o.id
+    )
+  )
+  from public.orders o
+  where lower(o.order_number) = lower(trim(p_order_number))
+    and lower(o.email) = lower(trim(p_email))
+  limit 1;
+$$;
+
+revoke execute on function public.track_order from public;
+grant  execute on function public.track_order to anon, authenticated;
 
 -- Only signed-in users may call the RPCs (defense in depth — the functions
 -- also verify current_user_id() / is_admin() internally)

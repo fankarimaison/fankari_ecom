@@ -67,6 +67,15 @@ export function Footer() {
                   My account
                 </button>
               </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => navigate({ name: "track" })}
+                  className="rounded px-1 py-1.5 text-sm text-muted-foreground transition-colors hover:text-accent-foreground"
+                >
+                  Track your order
+                </button>
+              </li>
             </ul>
           </nav>
 

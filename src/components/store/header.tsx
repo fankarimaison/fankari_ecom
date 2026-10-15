@@ -49,6 +49,13 @@ export function Header() {
       </button>
       <button
         type="button"
+        onClick={() => navigate({ name: "track" })}
+        className="rounded-md px-3 py-2.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground min-h-[44px]"
+      >
+        Track order
+      </button>
+      <button
+        type="button"
         onClick={() => navigate({ name: "account" })}
         className="flex items-center gap-1.5 rounded-md px-3 py-2.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground min-h-[44px]"
       >
