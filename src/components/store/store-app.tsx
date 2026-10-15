@@ -21,6 +21,17 @@ import { AdminView } from "./views/admin";
  */
 export function StoreApp() {
   const view = useStore((s) => s.view);
+  const navigate = useStore((s) => s.navigate);
+
+  // Deep link from the order email: /?track=FM-XXXXXX&email=… opens tracking,
+  // then the query string is dropped so a refresh lands on the shop.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderNumber = params.get("track");
+    if (!orderNumber) return;
+    navigate({ name: "track", orderNumber, email: params.get("email") ?? "" });
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [navigate]);
 
   // New view → start from the top.
   useEffect(() => {

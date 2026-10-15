@@ -635,6 +635,60 @@ end;
 $$;
 
 -- ============================================================================
+-- 6a. Order emails — after an order is saved, ask the order-emails Edge
+--     Function (supabase/functions/order-emails) to send the confirmation and
+--     the admin alert through Brevo. pg_net sends the request only after the
+--     transaction commits, so the order items are already there.
+--
+--     Turned on by storing the shared secret in Vault (never in this file):
+--       select vault.create_secret('<long random string>', 'order_email_webhook_secret');
+--     Without that secret, or if anything here fails, orders still go through
+--     and simply no email is sent.
+-- ============================================================================
+
+create extension if not exists pg_net with schema extensions;
+
+create or replace function public.notify_order_emails()
+returns trigger
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_secret text;
+begin
+  select decrypted_secret into v_secret
+  from vault.decrypted_secrets
+  where name = 'order_email_webhook_secret'
+  limit 1;
+
+  if v_secret is null then
+    return new;
+  end if;
+
+  perform net.http_post(
+    url := 'https://dnksdwswznijifzhnlvy.supabase.co/functions/v1/order-emails',
+    body := jsonb_build_object('orderId', new.id),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-webhook-secret', v_secret
+    ),
+    timeout_milliseconds := 10000
+  );
+  return new;
+exception when others then
+  raise warning 'notify_order_emails failed for order %: %', new.id, sqlerrm;
+  return new;
+end;
+$$;
+
+revoke execute on function public.notify_order_emails() from public, anon, authenticated;
+
+drop trigger if exists on_order_created_send_emails on public.orders;
+create trigger on_order_created_send_emails
+  after insert on public.orders
+  for each row execute function public.notify_order_emails();
+
+-- ============================================================================
 -- 6b. Public order tracking — anyone with the order number AND the email used
 --     at checkout can see delivery progress. Returns only what a tracking
 --     page needs (no street address or phone); null when nothing matches.
