@@ -1,14 +1,15 @@
 "use client";
 
-import { Mail, MapPin, ShoppingBag } from "lucide-react";
+import { Mail, MapPin } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { LOGO_URL } from "@/lib/storage";
 import { useContent, useGoToSection } from "./hooks";
 
 export function Footer() {
   const { data: content } = useContent();
   const navigate = useStore((s) => s.navigate);
   const goToSection = useGoToSection();
-  const brandName = content?.brandName ?? "Terra & Thread";
+  const brandName = content?.brandName ?? "Fankari Maison";
 
   return (
     <footer className="mt-auto border-t border-border/70 bg-card">
@@ -17,10 +18,13 @@ export function Footer() {
           {/* Brand blurb */}
           <div>
             <div className="flex items-center gap-2.5">
-              <span className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                <ShoppingBag className="size-4" aria-hidden />
-              </span>
-              <span className="font-display text-lg font-semibold">
+              <img
+                src={LOGO_URL}
+                alt=""
+                aria-hidden
+                className="size-8 rounded-full object-cover"
+              />
+              <span className="font-display text-lg font-semibold text-brand">
                 {brandName}
               </span>
             </div>
@@ -75,10 +79,10 @@ export function Footer() {
               <li className="flex items-center gap-2">
                 <Mail className="size-4 shrink-0 text-primary" aria-hidden />
                 <a
-                  href="mailto:hello@terrathread.com"
+                  href="mailto:hello@fankarimaison.com"
                   className="transition-colors hover:text-accent-foreground"
                 >
-                  hello@terrathread.com
+                  hello@fankarimaison.com
                 </a>
               </li>
               <li className="flex items-center gap-2">

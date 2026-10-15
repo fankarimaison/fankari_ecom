@@ -2,28 +2,19 @@
 
 import { format } from "date-fns";
 
-const usd = new Intl.NumberFormat("en-US", {
+const inr = new Intl.NumberFormat("en-IN", {
   style: "currency",
-  currency: "USD",
+  currency: "INR",
 });
 
-/** Format a number as USD currency, e.g. 42 → "$42.00" */
+/** Format a number as Indian Rupees, e.g. 4200 → "₹4,200.00" */
 export function formatPrice(value: number): string {
-  return usd.format(value);
+  return inr.format(value);
 }
 
 /** Format an ISO date string / Date as "Jan 3, 2025" */
 export function formatDate(value: string | Date): string {
   return format(new Date(value), "MMM d, yyyy");
-}
-
-/** Free-shipping threshold shared with the API contract. */
-export const FREE_SHIPPING_THRESHOLD = 75;
-export const FLAT_SHIPPING_RATE = 6.99;
-
-/** Shipping for a subtotal: free over $75, else $6.99 flat. */
-export function shippingFor(subtotal: number): number {
-  return subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING_RATE;
 }
 
 /** Human label for an order status. */

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Typed API client for the Terra & Thread storefront.
+ * Typed API client for the Fankari Maison storefront.
  * Written against docs/api-contract.md EXACTLY — all URLs are relative.
  */
 
@@ -35,7 +35,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       credentials: "same-origin",
       ...init,
       headers: {
-        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(typeof init?.body === "string" ? { "Content-Type": "application/json" } : {}),
         ...init?.headers,
       },
     });
@@ -73,6 +73,15 @@ export const apiPatch = <T,>(path: string, body?: unknown) =>
   request<T>(path, { method: "PATCH", body: body === undefined ? undefined : JSON.stringify(body) });
 export const apiDelete = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
+/** Upload an image to Supabase Storage (admin only); resolves to its public URL. */
+export async function uploadImage(file: File, folder: "products" | "site"): Promise<string> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("folder", folder);
+  const data = await request<{ url: string }>("/api/admin/upload", { method: "POST", body });
+  return data.url;
+}
+
 /* ---------------------------------- DTOs ---------------------------------- */
 
 export type Role = "CUSTOMER" | "ADMIN";
@@ -89,7 +98,10 @@ export interface Product {
   name: string;
   slug: string;
   description: string;
+  /** before VAT and discount */
   price: number;
+  discountPercent: number;
+  vatRate: number;
   stock: number;
   category: string;
   image: string;
@@ -110,6 +122,11 @@ export interface CartItem {
 export interface CartResponse {
   items: CartItem[];
   subtotal: number;
+  discount: number;
+  vat: number;
+  itemsTotal: number;
+  shipping: number;
+  total: number;
   count: number;
 }
 
@@ -117,9 +134,12 @@ export interface OrderItem {
   id: string;
   productId: string;
   name: string;
+  /** unit price charged — after discount, incl. VAT */
   price: number;
   quantity: number;
   image: string | null;
+  discountPercent: number;
+  vatRate: number;
 }
 
 export type OrderStatus =
@@ -134,8 +154,11 @@ export interface Order {
   orderNumber: string;
   status: OrderStatus | string;
   subtotal: number;
+  discount: number;
+  vat: number;
   shipping: number;
   total: number;
+  paymentMethod: string;
   customerName: string;
   email: string;
   phone: string | null;

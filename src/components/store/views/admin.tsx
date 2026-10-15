@@ -9,6 +9,7 @@ import { AdminProducts } from "../admin/products-panel";
 import { AdminInventory } from "../admin/inventory-panel";
 import { AdminOrders } from "../admin/orders-panel";
 import { AdminContent } from "../admin/content-panel";
+import { AdminShipping } from "../admin/shipping-panel";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ const TABS: { key: AdminTab; label: string }[] = [
   { key: "products", label: "Products" },
   { key: "inventory", label: "Inventory" },
   { key: "orders", label: "Orders" },
+  { key: "shipping", label: "Shipping" },
   { key: "content", label: "Content" },
 ];
 
@@ -51,8 +53,8 @@ export function AdminView({ tab }: { tab?: AdminTab }) {
         <div>
           <p className="font-display text-2xl font-semibold">Admin access required</p>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            This area is for the Terra &amp; Thread studio team. Sign in with an
-            admin account (demo: admin@terrathread.com / admin123).
+            This area is for the Fankari Maison studio team. Sign in with an
+            account that has the admin role.
           </p>
         </div>
         <Button
@@ -108,6 +110,7 @@ export function AdminView({ tab }: { tab?: AdminTab }) {
         {active === "products" && <AdminProducts />}
         {active === "inventory" && <AdminInventory />}
         {active === "orders" && <AdminOrders />}
+        {active === "shipping" && <AdminShipping />}
         {active === "content" && <AdminContent />}
       </div>
     </div>

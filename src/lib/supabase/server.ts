@@ -1,33 +1,20 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { auth } from '@clerk/nextjs/server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 
 /**
  * Server-side Supabase client for route handlers, server components and
- * server actions. Sessions are carried in cookies (managed by @supabase/ssr),
- * so every query runs with the signed-in user's JWT and is protected by RLS.
+ * server actions. Every query carries the signed-in user's Clerk session
+ * token (Supabase third-party auth), so RLS sees the Clerk user id as
+ * auth.jwt()->>'sub'. Signed-out requests run as anon.
  */
 export async function createClient() {
-  const cookieStore = await cookies()
+  const { getToken } = await auth()
 
-  return createServerClient(
+  return createSupabaseClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options),
-            )
-          } catch {
-            // Called from a Server Component — safe to ignore because the
-            // middleware refreshes sessions before they expire.
-          }
-        },
-      },
+      accessToken: async () => (await getToken()) ?? null,
     },
   )
 }

@@ -16,7 +16,7 @@ export type View =
   | { name: "account" }
   | {
       name: "admin";
-      tab?: "dashboard" | "products" | "inventory" | "orders" | "content";
+      tab?: "dashboard" | "products" | "inventory" | "orders" | "shipping" | "content";
     };
 
 export interface StoreState {

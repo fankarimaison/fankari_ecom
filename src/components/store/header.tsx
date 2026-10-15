@@ -1,7 +1,9 @@
 "use client";
 
 import { Menu, ShoppingBag, Sparkles, User as UserIcon } from "lucide-react";
+import { Show, SignInButton, UserButton } from "@clerk/nextjs";
 import { useStore } from "@/lib/store";
+import { LOGO_URL } from "@/lib/storage";
 import { useCart, useContent, useGoToSection, useMe } from "./hooks";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,7 +24,7 @@ export function Header() {
   const goToSection = useGoToSection();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const brandName = content?.brandName ?? "Terra & Thread";
+  const brandName = content?.brandName ?? "Fankari Maison";
   const announcement = content?.announcement ?? "";
   const count = cart?.count ?? 0;
 
@@ -84,10 +86,13 @@ export function Header() {
             className="flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`${brandName} — go to home`}
           >
-            <span className="flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
-              <ShoppingBag className="size-4.5" aria-hidden />
-            </span>
-            <span className="font-display text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+            <img
+              src={LOGO_URL}
+              alt=""
+              aria-hidden
+              className="size-9 rounded-full object-cover"
+            />
+            <span className="font-display text-lg font-semibold tracking-tight text-brand sm:text-xl">
               {brandName}
             </span>
           </button>
@@ -102,6 +107,18 @@ export function Header() {
 
           {/* Actions */}
           <div className="flex items-center gap-1.5">
+            <Show when="signed-out">
+              <SignInButton mode="modal" withSignUp>
+                <Button variant="ghost" className="min-h-11 rounded-full px-4">
+                  Sign in
+                </Button>
+              </SignInButton>
+            </Show>
+            <Show when="signed-in">
+              <span className="flex size-11 items-center justify-center">
+                <UserButton />
+              </span>
+            </Show>
             <Button
               variant="ghost"
               size="icon"
@@ -131,7 +148,7 @@ export function Header() {
               </SheetTrigger>
               <SheetContent side="right" className="w-72" aria-describedby={undefined}>
                 <SheetHeader>
-                  <SheetTitle className="font-display text-lg">
+                  <SheetTitle className="font-display text-lg text-brand">
                     {brandName}
                   </SheetTitle>
                 </SheetHeader>

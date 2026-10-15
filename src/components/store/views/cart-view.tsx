@@ -2,21 +2,23 @@
 
 import { ArrowRight, ShoppingBag } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { formatPrice, shippingFor, FREE_SHIPPING_THRESHOLD } from "@/lib/format";
+import { formatPrice } from "@/lib/format";
+import { amountToFreeShipping, unitPrice } from "@/lib/pricing";
+import { useShipping } from "../hooks";
+import { PriceSummary } from "../price-summary";
 import { CartLineItem, useCartState } from "../cart-line";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function CartView() {
   const navigate = useStore((s) => s.navigate);
   const { user, cart, isLoading } = useCartState();
+  const shipping = useShipping();
 
   const items = cart?.items ?? [];
-  const subtotal = cart?.subtotal ?? 0;
-  const shipping = shippingFor(subtotal);
-  const total = subtotal + shipping;
+  // null when the free-shipping waiver is switched off in Admin
+  const toFree = cart ? amountToFreeShipping(cart.itemsTotal, shipping) : null;
 
   if (!user) {
     return (
@@ -103,7 +105,7 @@ export function CartView() {
                 itemId={item.id}
                 name={item.product.name}
                 image={item.product.image}
-                price={item.product.price}
+                price={unitPrice(item.product)}
                 quantity={item.quantity}
                 maxQuantity={item.product.stock}
               />
@@ -117,31 +119,13 @@ export function CartView() {
             <CardTitle className="font-display text-lg">Order Summary</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="font-medium">{formatPrice(subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Shipping</span>
-              <span className="font-medium">
-                {shipping === 0 ? (
-                  <span className="text-secondary-foreground">FREE</span>
-                ) : (
-                  formatPrice(shipping)
-                )}
-              </span>
-            </div>
-            {shipping > 0 && (
+            {cart && <PriceSummary totals={cart} />}
+            {cart && cart.shipping > 0 && toFree !== null && toFree > 0 && (
               <p className="rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground">
-                Add {formatPrice(FREE_SHIPPING_THRESHOLD - subtotal)} more for free
+                Add {formatPrice(toFree)} more for free
                 shipping.
               </p>
             )}
-            <Separator />
-            <div className="flex justify-between text-base font-semibold">
-              <span>Total</span>
-              <span>{formatPrice(total)}</span>
-            </div>
             <Button
               size="lg"
               className="mt-2 min-h-12 w-full rounded-full text-base"

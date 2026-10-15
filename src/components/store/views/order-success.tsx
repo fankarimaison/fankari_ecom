@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, PackageSearch } from "lucide-react";
 import { apiGet, type Order } from "../api";
 import { formatDate, formatPrice, statusBadgeClass, statusLabel } from "@/lib/format";
+import { PriceSummary } from "../price-summary";
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -121,20 +122,7 @@ export function OrderSuccessView({ orderId }: { orderId: string }) {
             ))}
           </ul>
           <Separator />
-          <div className="space-y-1.5 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span>{formatPrice(order.subtotal)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Shipping</span>
-              <span>{order.shipping === 0 ? "FREE" : formatPrice(order.shipping)}</span>
-            </div>
-            <div className="flex justify-between pt-1 text-base font-semibold">
-              <span>Total</span>
-              <span>{formatPrice(order.total)}</span>
-            </div>
-          </div>
+          <PriceSummary totals={order} paymentMethod={order.paymentMethod} />
           <Separator />
           <div className="text-sm text-muted-foreground">
             <p className="font-medium text-foreground">Shipping to</p>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, PackageOpen } from "lucide-react";
 import { formatDate, formatPrice, statusBadgeClass, statusLabel } from "@/lib/format";
+import { priceSummaryText } from "../price-summary";
 import { useAdminOrderStatusMutation, useAdminOrders } from "./use-admin";
 import { PanelLoading } from "../views/admin";
 import { Badge } from "@/components/ui/badge";
@@ -193,8 +194,7 @@ export function AdminOrders() {
                       </>
                     )}
                     <p className="mt-2">
-                      Subtotal {formatPrice(o.subtotal)} · Shipping{" "}
-                      {o.shipping === 0 ? "free" : formatPrice(o.shipping)} · Total{" "}
+                      {priceSummaryText(o)} · Total{" "}
                       <span className="font-semibold text-foreground">
                         {formatPrice(o.total)}
                       </span>

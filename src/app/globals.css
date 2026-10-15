@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@clerk/ui/themes/shadcn.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -34,6 +35,7 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-brand: var(--brand);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -45,7 +47,7 @@
 }
 
 /*
- * Terra & Thread — warm artisan palette (light theme only)
+ * Fankari Maison — warm artisan palette (light theme only)
  * cream background · stone text · terracotta primary · sage secondary
  * NO indigo / blue / purple anywhere.
  */
@@ -58,6 +60,8 @@
   --popover: #fffdf8;
   --popover-foreground: #292524;
   --primary: #b45309;
+  /* Logo terracotta (sampled from logo.jpg) — used for the brand wordmark */
+  --brand: #b93f1a;
   --primary-foreground: #fff8ef;
   --secondary: #e5e9dc;
   --secondary-foreground: #3d4534;

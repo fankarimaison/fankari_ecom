@@ -1,13 +1,6 @@
+import { auth } from '@clerk/nextjs/server'
 import { createClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
-
-/**
- * Orders at or above this subtotal ship free.
- */
-export const FREE_SHIPPING_THRESHOLD = 75
-
-/** Flat shipping fee applied below the free-shipping threshold. */
-export const FLAT_SHIPPING = 6.99
 
 export interface SessionUser {
   id: string
@@ -17,8 +10,10 @@ export interface SessionUser {
 }
 
 /**
- * Read the signed-in user from the Supabase session (cookies managed by
- * @supabase/ssr + middleware). Returns null when signed out.
+ * Read the signed-in user from the Clerk session. Returns null when signed
+ * out. The profile row is created/refreshed from the session token claims by
+ * the sync_profile() RPC (role is ADMIN when the user's Clerk public metadata
+ * has {"role":"admin"}).
  *
  * Accepts an optional existing server client to avoid creating a second one:
  *   const supabase = await createClient()
@@ -28,26 +23,21 @@ export async function getSessionUser(
   client?: SupabaseClient,
 ): Promise<SessionUser | null> {
   try {
+    const { userId } = await auth()
+    if (!userId) return null
+
     const supabase = client ?? (await createClient())
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (!user) return null
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('name, email, role')
-      .eq('id', user.id)
-      .single()
-
-    const role =
-      profile?.role === 'ADMIN' ? ('ADMIN' as const) : ('CUSTOMER' as const)
+    const { data: profile, error } = await supabase.rpc('sync_profile')
+    if (error || !profile) {
+      if (error) console.error('sync_profile failed:', error.message)
+      return null
+    }
 
     return {
-      id: user.id,
-      email: profile?.email ?? user.email ?? '',
-      name: profile?.name ?? '',
-      role,
+      id: userId,
+      email: profile.email ?? '',
+      name: profile.name ?? '',
+      role: profile.role === 'ADMIN' ? 'ADMIN' : 'CUSTOMER',
     }
   } catch {
     return null

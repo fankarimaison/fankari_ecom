@@ -1,4 +1,4 @@
-# Frontend Spec — Terra & Thread (Handcrafted Tote Bags Store)
+# Frontend Spec — Fankari Maison (Handcrafted Tote Bags Store)
 
 Task 4-b builds the ENTIRE frontend as a single-page app on the `/` route (user can only see `src/app/page.tsx` — do NOT create other page routes).
 
@@ -24,7 +24,7 @@ Task 4-b builds the ENTIRE frontend as a single-page app on the `/` route (user 
 ## Design language (MANDATORY — artisan/warm aesthetic, NO indigo/blue/purple)
 
 - Palette: warm cream background (`#FAF6F0`-ish via bg styling), stone-900 text, terracotta accent (amber-800/orange-800 family, e.g. `#B45309` amber-700) for primary buttons/links/badges, sage green (stone/olive) as secondary. Style via Tailwind classes; customize CSS variables in `globals.css` if helpful (keep light theme).
-- Typography: add Google font `Fraunces` (serif, for headings/brand) + keep Geist for body, via `next/font/google` in `layout.tsx` (e.g. variable `--font-serif`). Headings use `font-serif`. Update metadata title to "Terra & Thread — Handcrafted Tote Bags".
+- Typography: add Google font `Fraunces` (serif, for headings/brand) + keep Geist for body, via `next/font/google` in `layout.tsx` (e.g. variable `--font-serif`). Headings use `font-serif`. Update metadata title to "Fankari Maison — Handcrafted Tote Bags".
 - Feel: editorial, generous whitespace, subtle framer-motion fade/slide transitions between views, rounded-xl cards, soft shadows, hover scale on product images.
 - Layout: sticky announcement bar (from content.announcement), header (brand name serif logo mark 🧵-like via lucide `ShoppingBag`/`Sparkles` icon + nav), main content, **sticky footer** (root wrapper `min-h-screen flex flex-col`, footer `mt-auto`, include safe-area padding `pb-[env(safe-area-inset-bottom)]`). Footer: brand blurb, quick links (Shop, About, Account), contact line, copyright with brandName.
 

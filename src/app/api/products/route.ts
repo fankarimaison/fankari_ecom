@@ -6,6 +6,7 @@ import {
   setupRequiredResponse,
   type ProductRow,
 } from '@/lib/dto'
+import { isPercent } from '@/lib/pricing'
 
 function slugify(name: string): string {
   return (
@@ -114,6 +115,12 @@ export async function POST(req: NextRequest) {
     const dimensions =
       typeof body.dimensions === 'string' && body.dimensions.trim() ? body.dimensions.trim() : ''
     const featured = body.featured === true
+    const discountPercent = body.discountPercent ?? 0
+    const vatRate = body.vatRate ?? 0
+    if (!isPercent(discountPercent))
+      return NextResponse.json({ error: 'Discount must be between 0 and 100%' }, { status: 400 })
+    if (!isPercent(vatRate))
+      return NextResponse.json({ error: 'VAT must be between 0 and 100%' }, { status: 400 })
 
     // Slug from the name, with -2, -3… suffixes on collision.
     const base = slugify(name)
@@ -137,6 +144,8 @@ export async function POST(req: NextRequest) {
         slug,
         description,
         price,
+        discount_percent: discountPercent,
+        vat_rate: vatRate,
         stock,
         category,
         image,

@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ShoppingBag } from "lucide-react";
+import { Banknote, Loader2, ShoppingBag } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useStore } from "@/lib/store";
-import { formatPrice, shippingFor } from "@/lib/format";
+import { formatPrice } from "@/lib/format";
+import { isPaymentMethod, PAYMENT_METHODS, unitPrice } from "@/lib/pricing";
+import { PriceSummary } from "../price-summary";
 import { apiPost, type Order } from "../api";
 import { useCartState } from "../cart-line";
 import { useMe } from "../hooks";
@@ -16,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +32,7 @@ const checkoutSchema = z.object({
   city: z.string().min(1, "City is required"),
   postalCode: z.string().optional(),
   notes: z.string().optional(),
+  paymentMethod: z.string().refine((v): boolean => isPaymentMethod(v), "Please choose a payment method"),
 });
 
 type CheckoutForm = z.infer<typeof checkoutSchema>;
@@ -49,12 +54,15 @@ export function CheckoutView() {
       city: "",
       postalCode: "",
       notes: "",
+      paymentMethod: "",
     }),
     [user]
   );
 
   const {
     register,
+    control,
+    watch,
     handleSubmit,
     formState: { errors },
   } = useForm<CheckoutForm>({
@@ -113,9 +121,7 @@ export function CheckoutView() {
   }
 
   const items = cart?.items ?? [];
-  const subtotal = cart?.subtotal ?? 0;
-  const shipping = shippingFor(subtotal);
-  const total = subtotal + shipping;
+  const total = cart?.total ?? 0;
 
   if (!cartLoading && items.length === 0) {
     return (
@@ -242,8 +248,53 @@ export function CheckoutView() {
           </CardContent>
         </Card>
 
+        {/* Payment — methods come from PAYMENT_METHODS (src/lib/pricing.ts) */}
+        <Card className="lg:col-start-1">
+          <CardHeader>
+            <CardTitle className="font-display text-lg">Payment method</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Controller
+              control={control}
+              name="paymentMethod"
+              render={({ field }) => (
+                <RadioGroup
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  aria-label="Payment method"
+                  aria-invalid={!!errors.paymentMethod}
+                  className="gap-3"
+                >
+                  {PAYMENT_METHODS.map((method) => (
+                    <Label
+                      key={method.id}
+                      htmlFor={`pay-${method.id}`}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-3 rounded-lg border-2 p-4 font-normal transition-colors",
+                        field.value === method.id
+                          ? "border-primary bg-accent/40"
+                          : "border-border hover:border-primary/50",
+                      )}
+                    >
+                      <RadioGroupItem id={`pay-${method.id}`} value={method.id} />
+                      <Banknote className="size-5 shrink-0 text-primary" aria-hidden />
+                      <span>
+                        <span className="block text-sm font-semibold">{method.label}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {method.description}
+                        </span>
+                      </span>
+                    </Label>
+                  ))}
+                </RadioGroup>
+              )}
+            />
+            {fieldError("paymentMethod")}
+          </CardContent>
+        </Card>
+
         {/* Summary */}
-        <Card className="sticky top-32">
+        <Card className="sticky top-32 lg:col-start-2 lg:row-span-2 lg:row-start-1">
           <CardHeader>
             <CardTitle className="font-display text-lg">Your order</CardTitle>
           </CardHeader>
@@ -271,32 +322,14 @@ export function CheckoutView() {
                       {item.product.name}
                     </p>
                     <p className="text-sm font-semibold">
-                      {formatPrice(item.product.price * item.quantity)}
+                      {formatPrice(unitPrice(item.product) * item.quantity)}
                     </p>
                   </li>
                 ))}
               </ul>
             )}
             <Separator />
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="font-medium">{formatPrice(subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Shipping</span>
-              <span className="font-medium">
-                {shipping === 0 ? (
-                  <span className="text-secondary-foreground">FREE</span>
-                ) : (
-                  formatPrice(shipping)
-                )}
-              </span>
-            </div>
-            <Separator />
-            <div className="flex justify-between text-base font-semibold">
-              <span>Total</span>
-              <span>{formatPrice(total)}</span>
-            </div>
+            {cart && <PriceSummary totals={cart} paymentMethod={watch("paymentMethod")} />}
             <Button
               type="submit"
               size="lg"

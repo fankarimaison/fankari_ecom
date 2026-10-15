@@ -7,6 +7,7 @@ import {
   type OrderDTO,
   type OrderRow,
 } from '@/lib/dto'
+import { isPaymentMethod } from '@/lib/pricing'
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 
@@ -37,6 +38,8 @@ export async function POST(req: NextRequest) {
     if (!email) return NextResponse.json({ error: 'Email is required' }, { status: 400 })
     if (!address) return NextResponse.json({ error: 'Shipping address is required' }, { status: 400 })
     if (!city) return NextResponse.json({ error: 'City is required' }, { status: 400 })
+    if (!isPaymentMethod(body.paymentMethod))
+      return NextResponse.json({ error: 'Please choose a payment method' }, { status: 400 })
 
     // Atomic: load cart → validate stock → create order + snapshot items →
     // decrement stock → clear cart. Returns the camelCase order JSON directly.
@@ -48,6 +51,7 @@ export async function POST(req: NextRequest) {
       p_city: city,
       p_postal_code: postalCode,
       p_notes: notes,
+      p_payment_method: body.paymentMethod,
     })
 
     if (error) {
@@ -61,6 +65,9 @@ export async function POST(req: NextRequest) {
         const match = /^STOCK:(.+):(\d+)$/.exec(msg)
         const stock = match ? match[2] : '0'
         return NextResponse.json({ error: `Only ${stock} left in stock` }, { status: 400 })
+      }
+      if (msg.includes('PAYMENT_METHOD')) {
+        return NextResponse.json({ error: 'Please choose a payment method' }, { status: 400 })
       }
       if (msg.includes('AUTH_REQUIRED')) {
         return NextResponse.json({ error: 'Please sign in to place an order' }, { status: 401 })

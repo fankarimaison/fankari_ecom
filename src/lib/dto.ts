@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  priceTotals,
+  SHIPPING_CONTENT_DEFAULTS,
+  shippingFromContent,
+  type PriceTotals,
+  type ShippingSettings,
+} from '@/lib/pricing'
 
 /**
  * Shared DTO mapping + small route helpers for the Supabase-backed API.
@@ -25,7 +32,10 @@ export interface ProductDTO {
   name: string
   slug: string
   description: string
+  /** before VAT and discount */
   price: number
+  discountPercent: number
+  vatRate: number
   stock: number
   category: string
   image: string
@@ -47,9 +57,12 @@ export interface OrderItemDTO {
   id: string
   productId: string | null
   name: string
+  /** unit price charged — after discount, incl. VAT */
   price: number
   quantity: number
   image: string
+  discountPercent: number
+  vatRate: number
 }
 
 export interface OrderDTO {
@@ -57,8 +70,11 @@ export interface OrderDTO {
   orderNumber: string
   status: string
   subtotal: number
+  discount: number
+  vat: number
   shipping: number
   total: number
+  paymentMethod: string
   customerName: string
   email: string
   phone: string
@@ -85,6 +101,8 @@ export interface ProductRow {
   slug: string
   description: string
   price: number | string
+  discount_percent: number | string | null
+  vat_rate: number | string | null
   stock: number
   category: string
   image: string
@@ -112,6 +130,8 @@ export interface OrderItemRow {
   price: number | string
   quantity: number
   image: string
+  discount_percent: number | string | null
+  vat_rate: number | string | null
 }
 
 export interface OrderRow {
@@ -120,8 +140,11 @@ export interface OrderRow {
   order_number: string
   status: string
   subtotal: number | string
+  discount: number | string | null
+  vat: number | string | null
   shipping: number | string
   total: number | string
+  payment_method: string | null
   customer_name: string
   email: string
   phone: string
@@ -155,6 +178,8 @@ export function mapProduct(row: ProductRow): ProductDTO {
     slug: row.slug,
     description: row.description,
     price: Number(row.price),
+    discountPercent: Number(row.discount_percent ?? 0),
+    vatRate: Number(row.vat_rate ?? 0),
     stock: Number(row.stock),
     category: row.category,
     image: row.image,
@@ -179,6 +204,8 @@ export function mapCartItem(row: CartItemRow): CartItemDTO {
           slug: '',
           description: '',
           price: 0,
+          discountPercent: 0,
+          vatRate: 0,
           stock: 0,
           category: '',
           image: '',
@@ -199,6 +226,8 @@ export function mapOrderItem(row: OrderItemRow): OrderItemDTO {
     price: Number(row.price),
     quantity: Number(row.quantity),
     image: row.image,
+    discountPercent: Number(row.discount_percent ?? 0),
+    vatRate: Number(row.vat_rate ?? 0),
   }
 }
 
@@ -208,8 +237,11 @@ export function mapOrder(row: OrderRow): OrderDTO {
     orderNumber: row.order_number,
     status: row.status,
     subtotal: Number(row.subtotal),
+    discount: Number(row.discount ?? 0),
+    vat: Number(row.vat ?? 0),
     shipping: Number(row.shipping),
     total: Number(row.total),
+    paymentMethod: row.payment_method ?? 'COD',
     customerName: row.customer_name,
     email: row.email,
     phone: row.phone,
@@ -230,56 +262,29 @@ export function mapAdminOrder(row: AdminOrderRow): AdminOrderDTO {
 }
 
 // ---------------------------------------------------------------------------
-// Auth user → UserDTO (profile row optional — fall back to auth metadata)
-// ---------------------------------------------------------------------------
-
-export function mapAuthUser(
-  authUser: {
-    id: string
-    email?: string | null
-    user_metadata?: Record<string, unknown> | null
-  },
-  profile: ProfileRow | null,
-): UserDTO {
-  const metaName = authUser.user_metadata?.name
-  return {
-    id: authUser.id,
-    name:
-      profile?.name ??
-      (typeof metaName === 'string' && metaName.trim() ? metaName : ''),
-    email: profile?.email ?? authUser.email ?? '',
-    role: profile?.role === 'ADMIN' ? 'ADMIN' : 'CUSTOMER',
-  }
-}
-
-/** Fetch the profile row for an auth user (null when missing — never throws). */
-export async function fetchProfile(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<ProfileRow | null> {
-  const { data } = await supabase
-    .from('profiles')
-    .select('id, name, email, role')
-    .eq('id', userId)
-    .maybeSingle()
-  return (data as ProfileRow | null) ?? null
-}
-
-// ---------------------------------------------------------------------------
 // Shared cart payload — used by every /api/cart handler response
 // ---------------------------------------------------------------------------
 
-const round2 = (n: number) => Math.round(n * 100) / 100
-
-export interface CartPayload {
+export interface CartPayload extends PriceTotals {
   items: CartItemDTO[]
-  subtotal: number
   count: number
+}
+
+/** Shipping settings from site_content (defaults when unset or unreadable). */
+export async function fetchShippingSettings(supabase: SupabaseClient): Promise<ShippingSettings> {
+  const { data } = await supabase
+    .from('site_content')
+    .select('key,value')
+    .in('key', Object.keys(SHIPPING_CONTENT_DEFAULTS))
+  const content: Record<string, string> = {}
+  for (const row of (data ?? []) as { key: string; value: string }[]) content[row.key] = row.value
+  return shippingFromContent(content)
 }
 
 /**
  * Full refreshed cart for the user: rows (created_at asc) with the embedded
- * product, subtotal = Σ price×qty (2 decimals) and count = Σ quantity.
+ * product, the order totals place_order() will charge (see priceTotals) and
+ * count = Σ quantity.
  * Throws the raw PostgREST error so callers can apply the setup guard.
  */
 export async function fetchCartPayload(
@@ -294,11 +299,12 @@ export async function fetchCartPayload(
   if (error) throw error
 
   const rows = ((data ?? []) as CartItemRow[]).map(mapCartItem)
-  const subtotal = round2(
-    rows.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
+  const totals = priceTotals(
+    rows.map((item) => ({ ...item.product, quantity: item.quantity })),
+    await fetchShippingSettings(supabase),
   )
   const count = rows.reduce((sum, item) => sum + item.quantity, 0)
-  return { items: rows, subtotal, count }
+  return { items: rows, ...totals, count }
 }
 
 // ---------------------------------------------------------------------------

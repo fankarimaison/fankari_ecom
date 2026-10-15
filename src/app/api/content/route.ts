@@ -2,21 +2,42 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getSessionUser, isSchemaMissing } from '@/lib/auth'
 import { setupRequiredResponse } from '@/lib/dto'
+import { HERO_IMAGE_URL } from '@/lib/storage'
+import { isAmount, SHIPPING_CONTENT_DEFAULTS } from '@/lib/pricing'
 
 type SchemaError = { code?: string; message?: string }
 
 /** Built-in defaults, merged under the site_content rows (matches schema.sql seed). */
 const DEFAULT_CONTENT: Record<string, string> = {
-  brandName: 'Terra & Thread',
+  brandName: 'Fankari Maison',
   announcement:
-    'Free shipping on all orders over $75 · Handcrafted in small batches',
+    'Free shipping on all orders over ₹75 · Handcrafted in small batches',
   heroTitle: 'Carried by Hand, Made with Heart',
   heroSubtitle:
     'Small-batch tote bags handcrafted from natural canvas, jute and full-grain leather. Built for everyday adventures, designed to last a lifetime.',
-  heroImage: '/images/hero.jpg',
+  heroImage: HERO_IMAGE_URL,
   aboutTitle: 'Crafted Slowly, Made to Last',
   aboutText:
-    'Every Terra & Thread bag begins as raw natural fibre — sturdy cotton canvas, rustic jute, buttery full-grain leather — and passes through the hands of skilled artisans who cut, stitch and finish each piece in small batches. We believe the things you carry every day should be beautiful, honest and built to age gracefully. No mass production, no shortcuts: just time-honoured craft and materials that get better with every year you carry them.',
+    'Every Fankari Maison bag begins as raw natural fibre — sturdy cotton canvas, rustic jute, buttery full-grain leather — and passes through the hands of skilled artisans who cut, stitch and finish each piece in small batches. We believe the things you carry every day should be beautiful, honest and built to age gracefully. No mass production, no shortcuts: just time-honoured craft and materials that get better with every year you carry them.',
+  ...SHIPPING_CONTENT_DEFAULTS,
+}
+
+/** Shipping keys are read by place_order(), so only accept well-formed values. */
+function invalidShippingEntry(entries: [string, string][]): string | null {
+  for (const [key, raw] of entries) {
+    const value = raw.trim()
+    if (key === 'shippingFee' || key === 'freeShippingThreshold') {
+      if (value === '' || !isAmount(Number(value))) {
+        return key === 'shippingFee'
+          ? 'Shipping charge must be an amount of ₹0 or more'
+          : 'Free-shipping threshold must be an amount of ₹0 or more'
+      }
+    }
+    if (key === 'freeShippingEnabled' && value !== 'true' && value !== 'false') {
+      return 'freeShippingEnabled must be "true" or "false"'
+    }
+  }
+  return null
 }
 
 async function mergedContent(supabase: Awaited<ReturnType<typeof createClient>>) {
@@ -70,6 +91,9 @@ export async function PUT(req: NextRequest) {
         { status: 400 }
       )
     }
+
+    const invalid = invalidShippingEntry(entries)
+    if (invalid) return NextResponse.json({ error: invalid }, { status: 400 })
 
     const rows = entries.map(([key, value]) => ({ key, value }))
     const { error } = await supabase

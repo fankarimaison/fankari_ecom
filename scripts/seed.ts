@@ -12,7 +12,7 @@ const products = [
     price: 42,
     stock: 24,
     category: 'Canvas',
-    image: '/images/p1.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p1.jpg',
     materials: '14oz natural cotton canvas, cotton webbing handles',
     dimensions: '38 × 35 × 12 cm',
     featured: true,
@@ -25,7 +25,7 @@ const products = [
     price: 58,
     stock: 16,
     category: 'Canvas',
-    image: '/images/p2.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p2.jpg',
     materials: 'Waxed cotton canvas, vegetable-tanned leather, brass hardware',
     dimensions: '40 × 38 × 14 cm',
     featured: true,
@@ -38,7 +38,7 @@ const products = [
     price: 49,
     stock: 20,
     category: 'Straw & Jute',
-    image: '/images/p3.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p3.jpg',
     materials: 'Natural woven straw, cotton tassels, cotton lining',
     dimensions: '45 × 35 × 15 cm',
     featured: true,
@@ -51,7 +51,7 @@ const products = [
     price: 36,
     stock: 30,
     category: 'Straw & Jute',
-    image: '/images/p4.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p4.jpg',
     materials: 'Woven jute, wooden handles, cotton lining',
     dimensions: '42 × 36 × 14 cm',
     featured: false,
@@ -64,7 +64,7 @@ const products = [
     price: 89,
     stock: 12,
     category: 'Leather Trim',
-    image: '/images/p5.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p5.jpg',
     materials: 'Cotton canvas, full-grain leather trim, brass rivets',
     dimensions: '40 × 30 × 13 cm',
     featured: true,
@@ -77,7 +77,7 @@ const products = [
     price: 120,
     stock: 8,
     category: 'Leather Trim',
-    image: '/images/p6.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p6.jpg',
     materials: 'Full-grain leather, solid brass hardware, suede lining',
     dimensions: '42 × 32 × 14 cm',
     featured: true,
@@ -90,7 +90,7 @@ const products = [
     price: 45,
     stock: 22,
     category: 'Linen',
-    image: '/images/p7.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p7.jpg',
     materials: '100% washed European linen',
     dimensions: '38 × 34 × 10 cm',
     featured: false,
@@ -103,7 +103,7 @@ const products = [
     price: 64,
     stock: 10,
     category: 'Special Edition',
-    image: '/images/p8.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p8.jpg',
     materials: 'Heavy cotton canvas, cotton embroidery thread',
     dimensions: '38 × 36 × 12 cm',
     featured: true,
@@ -116,7 +116,7 @@ const products = [
     price: 72,
     stock: 9,
     category: 'Special Edition',
-    image: '/images/p9.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p9.jpg',
     materials: 'Upcycled cotton fabrics, cotton batting, canvas lining',
     dimensions: '39 × 34 × 13 cm',
     featured: false,
@@ -129,7 +129,7 @@ const products = [
     price: 54,
     stock: 14,
     category: 'Special Edition',
-    image: '/images/p10.jpg',
+    image: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p10.jpg',
     materials: 'Braided cotton cord, cotton lining',
     dimensions: '36 × 38 × 11 cm',
     featured: false,
@@ -137,16 +137,16 @@ const products = [
 ]
 
 const defaultContent: Record<string, string> = {
-  brandName: 'Terra & Thread',
+  brandName: 'Fankari Maison',
   announcement:
-    'Free shipping on all orders over $75 · Handcrafted in small batches',
+    'Free shipping on all orders over ₹75 · Handcrafted in small batches',
   heroTitle: 'Carried by Hand, Made with Heart',
   heroSubtitle:
     'Small-batch tote bags handcrafted from natural canvas, jute and full-grain leather. Built for everyday adventures, designed to last a lifetime.',
-  heroImage: '/images/hero.jpg',
+  heroImage: 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/hero.jpg',
   aboutTitle: 'Crafted Slowly, Made to Last',
   aboutText:
-    'Every Terra & Thread bag begins as raw natural fibre — sturdy cotton canvas, rustic jute, buttery full-grain leather — and passes through the hands of skilled artisans who cut, stitch and finish each piece in small batches. We believe the things you carry every day should be beautiful, honest and built to age gracefully. No mass production, no shortcuts: just time-honoured craft and materials that get better with every year you carry them.',
+    'Every Fankari Maison bag begins as raw natural fibre — sturdy cotton canvas, rustic jute, buttery full-grain leather — and passes through the hands of skilled artisans who cut, stitch and finish each piece in small batches. We believe the things you carry every day should be beautiful, honest and built to age gracefully. No mass production, no shortcuts: just time-honoured craft and materials that get better with every year you carry them.',
 }
 
 async function main() {
@@ -166,7 +166,7 @@ async function main() {
 
   await prisma.user.create({
     data: {
-      email: 'admin@terrathread.com',
+      email: 'admin@fankarimaison.com',
       password: adminPass,
       name: 'Studio Admin',
       role: 'ADMIN',
@@ -180,7 +180,7 @@ async function main() {
       role: 'CUSTOMER',
     },
   })
-  console.log('✓ Users: admin@terrathread.com/admin123, customer@example.com/customer123')
+  console.log('✓ Users: admin@fankarimaison.com/admin123, customer@example.com/customer123')
 
   // Products
   for (const p of products) {

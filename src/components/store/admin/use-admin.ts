@@ -68,6 +68,8 @@ export interface AdminProductInput {
   name: string;
   description: string;
   price: number;
+  discountPercent: number;
+  vatRate: number;
   stock: number;
   category: string;
   image: string;

@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Megaphone } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { HERO_IMAGE_URL } from "@/lib/storage";
+import { ImageField } from "./image-field";
 import { apiPut, type SiteContent } from "../api";
 import { useContent } from "../hooks";
 import { PanelLoading } from "../views/admin";
@@ -24,6 +26,7 @@ const FIELDS: {
   key: string;
   label: string;
   multiline?: boolean;
+  image?: boolean;
   placeholder?: string;
   hint?: string;
 }[] = [
@@ -38,9 +41,9 @@ const FIELDS: {
   { key: "heroSubtitle", label: "Hero subtitle", multiline: true },
   {
     key: "heroImage",
-    label: "Hero image URL",
-    placeholder: "/images/hero.jpg",
-    hint: "Local path under /public or any image URL.",
+    label: "Hero image",
+    image: true,
+    placeholder: HERO_IMAGE_URL,
   },
   { key: "aboutTitle", label: "About title" },
   { key: "aboutText", label: "About text", multiline: true },
@@ -101,30 +104,42 @@ function ContentForm({ initial }: { initial: SiteContent }) {
       </CardHeader>
       <CardContent>
         <div className="grid gap-4">
-          {FIELDS.map(({ key, label, multiline, placeholder, hint }) => (
-            <div key={key}>
-              <Label htmlFor={`content-${key}`}>{label}</Label>
-              {multiline ? (
-                <Textarea
-                  id={`content-${key}`}
-                  rows={key === "aboutText" ? 5 : 2}
-                  className="mt-1.5"
-                  placeholder={placeholder}
-                  value={form[key] ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                />
-              ) : (
-                <Input
-                  id={`content-${key}`}
-                  className="mt-1.5 min-h-10"
-                  placeholder={placeholder}
-                  value={form[key] ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                />
-              )}
-              {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
-            </div>
-          ))}
+          {FIELDS.map(({ key, label, multiline, image, placeholder, hint }) =>
+            image ? (
+              <ImageField
+                key={key}
+                id={`content-${key}`}
+                label={label}
+                folder="site"
+                placeholder={placeholder}
+                value={form[key] ?? ""}
+                onChange={(url) => setForm((f) => ({ ...f, [key]: url }))}
+              />
+            ) : (
+              <div key={key}>
+                <Label htmlFor={`content-${key}`}>{label}</Label>
+                {multiline ? (
+                  <Textarea
+                    id={`content-${key}`}
+                    rows={key === "aboutText" ? 5 : 2}
+                    className="mt-1.5"
+                    placeholder={placeholder}
+                    value={form[key] ?? ""}
+                    onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                  />
+                ) : (
+                  <Input
+                    id={`content-${key}`}
+                    className="mt-1.5 min-h-10"
+                    placeholder={placeholder}
+                    value={form[key] ?? ""}
+                    onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                  />
+                )}
+                {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
+              </div>
+            ),
+          )}
         </div>
         <Button
           size="lg"

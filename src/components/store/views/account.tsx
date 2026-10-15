@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { SignIn, useClerk } from "@clerk/nextjs";
 import {
   ChevronDown,
-  Loader2,
   LogOut,
   Mail,
   PackageOpen,
@@ -16,11 +16,11 @@ import { useStore } from "@/lib/store";
 import { formatDate, formatPrice, statusBadgeClass, statusLabel } from "@/lib/format";
 import {
   apiGet,
-  apiPost,
   type Order,
   type User,
 } from "../api";
 import { useMe } from "../hooks";
+import { priceSummaryText } from "../price-summary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,10 +30,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 export function AccountView() {
@@ -57,279 +54,24 @@ export function AccountView() {
 
 /* ------------------------------ Signed out ------------------------------- */
 
+// Clerk handles sign-in and sign-up inline (hash routing keeps the SPA view);
+// AuthSync in providers.tsx refetches the session data once it completes.
 function SignedOut() {
-  const [tab, setTab] = useState<"signin" | "register">("signin");
-
   return (
-    <Card className="mx-auto max-w-md">
-      <CardHeader className="text-center">
+    <div className="flex flex-col items-center">
+      <div className="mb-6 text-center">
         <span className="mx-auto flex size-12 items-center justify-center rounded-full bg-secondary">
           <UserRound className="size-6 text-secondary-foreground" aria-hidden />
         </span>
-        <CardTitle className="font-display text-2xl">Welcome to your studio account</CardTitle>
-        <CardDescription>
+        <h1 className="font-display mt-3 text-2xl font-semibold">
+          Welcome to your studio account
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Sign in to use your bag, track orders and check out faster.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Tabs
-          value={tab}
-          onValueChange={(v) => setTab(v as "signin" | "register")}
-        >
-          <TabsList className="grid h-11 w-full grid-cols-2">
-            <TabsTrigger value="signin" className="min-h-9">Sign in</TabsTrigger>
-            <TabsTrigger value="register" className="min-h-9">Create account</TabsTrigger>
-          </TabsList>
-          <TabsContent value="signin" className="mt-4">
-            <LoginForm />
-          </TabsContent>
-          <TabsContent value="register" className="mt-4">
-            <RegisterForm onBackToSignIn={() => setTab("signin")} />
-          </TabsContent>
-        </Tabs>
-
-        <div className="mt-5 rounded-lg border border-dashed border-amber-300 bg-accent p-3 text-xs leading-relaxed text-accent-foreground">
-          <p className="font-semibold">Demo accounts</p>
-          <p className="mt-1">
-            Customer: <span className="font-mono">customer@example.com</span> /{" "}
-            <span className="font-mono">customer123</span>
-          </p>
-          <p>
-            Admin: <span className="font-mono">admin@terrathread.com</span> /{" "}
-            <span className="font-mono">admin123</span>
-          </p>
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            New sign-ups receive a confirmation email before their first
-            sign-in.
-          </p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function LoginForm() {
-  const { toast } = useToast();
-  const navigate = useStore((s) => s.navigate);
-  const queryClient = useQueryClient();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  const login = useMutation({
-    mutationFn: async () => {
-      const data = await apiPost<{ user: User }>("/api/auth/login", {
-        email: email.trim(),
-        password,
-      });
-      return data.user;
-    },
-    onSuccess: (user) => {
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
-      void queryClient.invalidateQueries({ queryKey: ["orders"] });
-      toast({ title: `Welcome back, ${user.name.split(" ")[0]}!` });
-      navigate({ name: "home" });
-    },
-    onError: (error) => {
-      toast({
-        title: "Sign in failed",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  return (
-    <form
-      className="space-y-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        login.mutate();
-      }}
-    >
-      <div>
-        <Label htmlFor="signin-email">Email</Label>
-        <Input
-          id="signin-email"
-          type="email"
-          required
-          autoComplete="email"
-          className="mt-1.5 min-h-11"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-      </div>
-      <div>
-        <Label htmlFor="signin-password">Password</Label>
-        <Input
-          id="signin-password"
-          type="password"
-          required
-          autoComplete="current-password"
-          className="mt-1.5 min-h-11"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </div>
-      <Button
-        type="submit"
-        size="lg"
-        disabled={login.isPending}
-        className="min-h-11 w-full rounded-full"
-      >
-        {login.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-        Sign in
-      </Button>
-    </form>
-  );
-}
-
-function RegisterForm({ onBackToSignIn }: { onBackToSignIn: () => void }) {
-  const { toast } = useToast();
-  const navigate = useStore((s) => s.navigate);
-  const queryClient = useQueryClient();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  // Set when the Supabase project requires email confirmation
-  // (register → { user: null, needsConfirmation: true, message }).
-  const [confirmation, setConfirmation] = useState<{
-    email: string;
-    message: string;
-  } | null>(null);
-
-  const register = useMutation({
-    mutationFn: async () => {
-      const data = await apiPost<{
-        user: User | null;
-        needsConfirmation?: boolean;
-        message?: string;
-      }>("/api/auth/register", {
-        name: name.trim(),
-        email: email.trim(),
-        password,
-      });
-      return data;
-    },
-    onSuccess: (data) => {
-      if (data.user) {
-        // Email confirmation disabled — signed in immediately.
-        void queryClient.invalidateQueries({ queryKey: ["me"] });
-        void queryClient.invalidateQueries({ queryKey: ["cart"] });
-        toast({
-          title: `Welcome, ${data.user.name.split(" ")[0]}!`,
-          description: "Your account is ready.",
-        });
-        navigate({ name: "home" });
-        return;
-      }
-      if (data.needsConfirmation) {
-        // Email confirmation enabled — show the check-your-email panel.
-        setConfirmation({
-          email: email.trim(),
-          message:
-            data.message ??
-            "Account created! Check your email to confirm your address before signing in.",
-        });
-      }
-    },
-    onError: (error) => {
-      toast({
-        title: "Could not create account",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  if (confirmation) {
-    return (
-      <div className="flex flex-col items-center py-6 text-center">
-        <span className="flex size-12 items-center justify-center rounded-full bg-secondary">
-          <Mail className="size-6 text-secondary-foreground" aria-hidden />
-        </span>
-        <h3 className="font-display mt-4 text-xl font-semibold">
-          Check your email
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {confirmation.message}
         </p>
-        <p className="mt-2 text-sm leading-relaxed">
-          We sent a confirmation link to{" "}
-          <span className="font-semibold">{confirmation.email}</span>.
-        </p>
-        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-          Click the confirmation link to verify your address, then sign in.
-        </p>
-        <Button
-          variant="outline"
-          className="mt-5 min-h-11 rounded-full"
-          onClick={() => {
-            setConfirmation(null);
-            onBackToSignIn();
-          }}
-        >
-          Back to sign in
-        </Button>
       </div>
-    );
-  }
-
-  return (
-    <form
-      className="space-y-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        register.mutate();
-      }}
-    >
-      <div>
-        <Label htmlFor="register-name">Name</Label>
-        <Input
-          id="register-name"
-          required
-          autoComplete="name"
-          className="mt-1.5 min-h-11"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-      </div>
-      <div>
-        <Label htmlFor="register-email">Email</Label>
-        <Input
-          id="register-email"
-          type="email"
-          required
-          autoComplete="email"
-          className="mt-1.5 min-h-11"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-      </div>
-      <div>
-        <Label htmlFor="register-password">Password</Label>
-        <Input
-          id="register-password"
-          type="password"
-          required
-          minLength={6}
-          autoComplete="new-password"
-          className="mt-1.5 min-h-11"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <p className="mt-1 text-xs text-muted-foreground">At least 6 characters.</p>
-      </div>
-      <Button
-        type="submit"
-        size="lg"
-        disabled={register.isPending}
-        className="min-h-11 w-full rounded-full"
-      >
-        {register.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-        Create account
-      </Button>
-    </form>
+      <SignIn routing="hash" withSignUp />
+    </div>
   );
 }
 
@@ -337,15 +79,12 @@ function RegisterForm({ onBackToSignIn }: { onBackToSignIn: () => void }) {
 
 function SignedIn({ user }: { user: User }) {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const { signOut } = useClerk();
   const navigate = useStore((s) => s.navigate);
 
   const logout = useMutation({
-    mutationFn: () => apiPost<{ success: boolean }>("/api/auth/logout"),
+    mutationFn: () => signOut(),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
-      void queryClient.invalidateQueries({ queryKey: ["orders"] });
       toast({ title: "Signed out. See you soon!" });
       navigate({ name: "home" });
     },
@@ -515,9 +254,7 @@ function OrderHistory() {
                         </p>
                         <p>
                           <span className="font-medium text-foreground">Summary: </span>
-                          {formatPrice(order.subtotal)} +{" "}
-                          {order.shipping === 0 ? "free shipping" : formatPrice(order.shipping)}{" "}
-                          shipping = {formatPrice(order.total)}
+                          {priceSummaryText(order)} · Total {formatPrice(order.total)}
                         </p>
                       </div>
                     </div>

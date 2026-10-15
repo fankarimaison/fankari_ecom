@@ -1,0 +1,11 @@
+▲ Next.js 16.4.0
+- Local:         http://localhost:3000
+- Network:       http://10.8.0.98:3000
+✓ Ready in 271ms
+✓ Running next.config.ts took 69ms
+Attention: Clerk collects telemetry data from its SDKs when connected to development instances.
+The data collected is used to inform Clerk's product roadmap.
+To learn more, including how to opt-out from the telemetry program, visit: https://clerk.com/docs/telemetry.
+
+POST /api/orders rpc error: PAYMENT_METHOD
+POST /api/orders rpc error: PAYMENT_METHOD

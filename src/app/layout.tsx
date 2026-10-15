@@ -1,3 +1,5 @@
+import { ClerkProvider } from "@clerk/nextjs";
+import { shadcn } from "@clerk/ui/themes";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
@@ -21,7 +23,7 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Terra & Thread — Handcrafted Tote Bags",
+  title: "Fankari Maison — Handcrafted Tote Bags",
   description:
     "Small-batch tote bags handcrafted from natural canvas, jute and full-grain leather. Built for everyday adventures, designed to last a lifetime.",
   keywords: [
@@ -30,14 +32,14 @@ export const metadata: Metadata = {
     "artisan",
     "canvas tote",
     "leather tote",
-    "Terra & Thread",
+    "Fankari Maison",
   ],
-  authors: [{ name: "Terra & Thread" }],
+  authors: [{ name: "Fankari Maison" }],
   openGraph: {
-    title: "Terra & Thread — Handcrafted Tote Bags",
+    title: "Fankari Maison — Handcrafted Tote Bags",
     description:
       "Small-batch tote bags handcrafted from natural canvas, jute and full-grain leather.",
-    siteName: "Terra & Thread",
+    siteName: "Fankari Maison",
     type: "website",
   },
 };
@@ -52,8 +54,15 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased bg-background text-foreground font-sans`}
       >
-        <Providers>{children}</Providers>
-        <Toaster />
+        <ClerkProvider
+          appearance={{
+            theme: shadcn,
+            variables: { colorPrimary: "var(--brand)" },
+          }}
+        >
+          <Providers>{children}</Providers>
+          <Toaster />
+        </ClerkProvider>
       </body>
     </html>
   );

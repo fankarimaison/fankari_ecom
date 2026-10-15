@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { Loader2, PackageOpen, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { formatPrice } from "@/lib/format";
+import { isPercent, listPrice, unitPrice } from "@/lib/pricing";
+import { DEFAULT_PRODUCT_IMAGE_URL } from "@/lib/storage";
+import { ImageField } from "./image-field";
 import { categories } from "../api";
 import type { Product } from "../api";
 import {
@@ -137,8 +140,12 @@ export function AdminProducts() {
                     </div>
                   </TableCell>
                   <TableCell className="text-sm">{p.category}</TableCell>
-                  <TableCell className="text-sm font-medium">
-                    {formatPrice(p.price)}
+                  <TableCell className="text-sm">
+                    <span className="font-medium">{formatPrice(unitPrice(p))}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {formatPrice(p.price)} + {p.vatRate}% VAT
+                      {p.discountPercent > 0 && ` · −${p.discountPercent}%`}
+                    </span>
                   </TableCell>
                   <TableCell>
                     {p.stock <= 5 ? (
@@ -252,9 +259,11 @@ function ProductDialog({
     name: product?.name ?? "",
     description: product?.description ?? "",
     price: product?.price ?? 0,
+    discountPercent: product?.discountPercent ?? 0,
+    vatRate: product?.vatRate ?? 0,
     stock: product?.stock ?? 0,
     category: product?.category ?? "Canvas",
-    image: product?.image ?? "/images/p1.jpg",
+    image: product?.image ?? DEFAULT_PRODUCT_IMAGE_URL,
     materials: product?.materials ?? "",
     dimensions: product?.dimensions ?? "",
     featured: product?.featured ?? false,
@@ -281,7 +290,8 @@ function ProductDialog({
   const invalid =
     !form.name.trim() || !form.description.trim() || !form.image.trim() ||
     Number.isNaN(form.price) || form.price < 0 ||
-    Number.isNaN(form.stock) || form.stock < 0;
+    Number.isNaN(form.stock) || form.stock < 0 ||
+    !isPercent(form.discountPercent) || !isPercent(form.vatRate);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -321,7 +331,7 @@ function ProductDialog({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="p-price">Price (USD)</Label>
+              <Label htmlFor="p-price">Price before VAT (₹)</Label>
               <Input
                 id="p-price"
                 type="number"
@@ -346,7 +356,41 @@ function ProductDialog({
                 required
               />
             </div>
+            <div>
+              <Label htmlFor="p-vat">VAT (%)</Label>
+              <Input
+                id="p-vat"
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
+                className="mt-1.5 min-h-10"
+                value={Number.isNaN(form.vatRate) ? "" : form.vatRate}
+                onChange={(e) => set("vatRate", parseFloat(e.target.value))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="p-discount">Discount (%)</Label>
+              <Input
+                id="p-discount"
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
+                className="mt-1.5 min-h-10"
+                value={Number.isNaN(form.discountPercent) ? "" : form.discountPercent}
+                onChange={(e) => set("discountPercent", parseFloat(e.target.value))}
+              />
+            </div>
           </div>
+          {!Number.isNaN(form.price) && isPercent(form.discountPercent) && isPercent(form.vatRate) && (
+            <p className="-mt-2 text-xs text-muted-foreground">
+              Customers pay{" "}
+              <span className="font-semibold text-foreground">{formatPrice(unitPrice(form))}</span>{" "}
+              incl. VAT
+              {form.discountPercent > 0 && <> (was {formatPrice(listPrice(form))})</>}.
+            </p>
+          )}
           <div>
             <Label htmlFor="p-category">Category</Label>
             <Select value={form.category} onValueChange={(v) => set("category", v)}>
@@ -362,28 +406,15 @@ function ProductDialog({
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <Label htmlFor="p-image">Image URL</Label>
-            <div className="mt-1.5 flex gap-3">
-              <Input
-                id="p-image"
-                className="min-h-10"
-                placeholder="/images/p1.jpg or https://…"
-                value={form.image}
-                onChange={(e) => set("image", e.target.value)}
-                required
-              />
-              <div className="size-10 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
-                {form.image && (
-                  <img
-                    src={form.image}
-                    alt="Product preview"
-                    className="h-full w-full object-cover"
-                  />
-                )}
-              </div>
-            </div>
-          </div>
+          <ImageField
+            id="p-image"
+            label="Product image"
+            folder="products"
+            placeholder={`${DEFAULT_PRODUCT_IMAGE_URL} or any image URL`}
+            value={form.image}
+            onChange={(url) => set("image", url)}
+            required
+          />
           <div>
             <Label htmlFor="p-materials">Materials</Label>
             <Input

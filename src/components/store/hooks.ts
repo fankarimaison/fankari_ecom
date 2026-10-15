@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useStore } from "@/lib/store";
+import { formatPrice } from "@/lib/format";
+import { shippingFromContent, type ShippingSettings } from "@/lib/pricing";
 import { apiGet, type CartResponse, type SiteContent, type User } from "./api";
 
 /** Current session user — null when signed out. */
@@ -33,6 +35,27 @@ export function useContent() {
     staleTime: 60_000,
     retry: false,
   });
+}
+
+/** Shipping settings from Admin → Content (defaults until content loads). */
+export function useShipping(): ShippingSettings {
+  const { data: content } = useContent();
+  return shippingFromContent(content);
+}
+
+/** Customer-facing shipping policy, e.g. "Free shipping over ₹75 · otherwise ₹6.99". */
+export function shippingPolicyText(s: ShippingSettings, short = false): string {
+  if (s.fee === 0 || (s.freeShippingEnabled && s.freeShippingThreshold === 0)) {
+    return short ? "Free shipping" : "Free shipping on every order.";
+  }
+  if (!s.freeShippingEnabled) {
+    return short
+      ? `Flat ${formatPrice(s.fee)} shipping`
+      : `Flat ${formatPrice(s.fee)} shipping on every order.`;
+  }
+  return short
+    ? `Free shipping over ${formatPrice(s.freeShippingThreshold)}`
+    : `Free shipping on orders over ${formatPrice(s.freeShippingThreshold)} — otherwise ${formatPrice(s.fee)} flat.`;
 }
 
 /** Logged-in user's cart. Disabled while signed out (API would 401). */

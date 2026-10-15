@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { HERO_IMAGE_URL } from "@/lib/storage";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -19,7 +20,7 @@ import {
   type Product,
   type ProductListParams,
 } from "../api";
-import { useContent, useDebounce } from "../hooks";
+import { shippingPolicyText, useContent, useDebounce, useShipping } from "../hooks";
 import { ProductCard, ProductCardSkeleton } from "../product-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,10 +34,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
-const trustItems = [
+const trustItems = (shippingText: string) => [
   { icon: HandHeart, title: "Handcrafted in small batches" },
   { icon: Leaf, title: "Natural materials" },
-  { icon: Truck, title: "Free shipping over $75" },
+  { icon: Truck, title: shippingText },
   { icon: ShieldCheck, title: "Built to last" },
 ];
 
@@ -60,16 +61,17 @@ const craftValues = [
 
 export function HomeView() {
   const { data: content } = useContent();
+  const shipping = useShipping();
 
-  const brandName = content?.brandName ?? "Terra & Thread";
+  const brandName = content?.brandName ?? "Fankari Maison";
   const heroTitle = content?.heroTitle ?? "Carried by Hand, Made with Heart";
   const heroSubtitle =
     content?.heroSubtitle ??
     "Small-batch tote bags handcrafted from natural canvas, jute and full-grain leather.";
-  const heroImage = content?.heroImage ?? "/images/hero.jpg";
+  const heroImage = content?.heroImage ?? HERO_IMAGE_URL;
   const aboutTitle = content?.aboutTitle ?? "Crafted Slowly, Made to Last";
   const aboutText = content?.aboutText ?? "";
-  const aboutImage = "/images/hero.jpg";
+  const aboutImage = HERO_IMAGE_URL;
 
   const [category, setCategory] = useState<string>("All");
   const [searchInput, setSearchInput] = useState("");
@@ -137,17 +139,6 @@ export function HomeView() {
                   (found in the project root), and press Run. The store, cart,
                   accounts and admin panel will come alive immediately.
                 </p>
-                <p className="mt-2 text-xs leading-relaxed text-amber-900/70">
-                  The demo logins{" "}
-                  <span className="font-mono">
-                    admin@terrathread.com / admin123
-                  </span>{" "}
-                  and{" "}
-                  <span className="font-mono">
-                    customer@example.com / customer123
-                  </span>{" "}
-                  are created by the same script.
-                </p>
               </div>
             </div>
           </div>
@@ -208,7 +199,7 @@ export function HomeView() {
             <div className="overflow-hidden rounded-2xl shadow-xl shadow-stone-900/10 ring-1 ring-stone-900/5">
               <img
                 src={heroImage}
-                alt="Handcrafted tote bags from the Terra & Thread collection"
+                alt="Handcrafted tote bags from the Fankari Maison collection"
                 className="aspect-[2/1] w-full object-cover sm:aspect-[16/10]"
               />
             </div>
@@ -222,7 +213,7 @@ export function HomeView() {
       {/* ---------------------------- Trust strip ---------------------------- */}
       <section aria-label="Why shop with us" className="border-y border-border/70 bg-card">
         <div className="mx-auto grid max-w-7xl grid-cols-2 gap-x-4 gap-y-5 px-4 py-6 sm:px-6 md:grid-cols-4 lg:px-8">
-          {trustItems.map(({ icon: Icon, title }) => (
+          {trustItems(shippingPolicyText(shipping, true)).map(({ icon: Icon, title }) => (
             <div key={title} className="flex items-center gap-3">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
                 <Icon className="size-5" aria-hidden />
@@ -379,7 +370,7 @@ export function HomeView() {
           <div className="overflow-hidden rounded-2xl shadow-lg shadow-stone-900/10 ring-1 ring-stone-900/5 order-2 lg:order-1">
             <img
               src={aboutImage}
-              alt="Artisan workshop where Terra & Thread totes are handmade"
+              alt="Artisan workshop where Fankari Maison totes are handmade"
               className="aspect-[4/3] w-full object-cover"
               loading="lazy"
             />

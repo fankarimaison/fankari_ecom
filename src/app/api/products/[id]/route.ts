@@ -7,6 +7,7 @@ import {
   UUID_RE,
   type ProductRow,
 } from '@/lib/dto'
+import { isPercent } from '@/lib/pricing'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -121,6 +122,18 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
         return NextResponse.json({ error: 'A valid price is required' }, { status: 400 })
       }
       data.price = body.price
+    }
+    if (body.discountPercent !== undefined) {
+      if (!isPercent(body.discountPercent)) {
+        return NextResponse.json({ error: 'Discount must be between 0 and 100%' }, { status: 400 })
+      }
+      data.discount_percent = body.discountPercent
+    }
+    if (body.vatRate !== undefined) {
+      if (!isPercent(body.vatRate)) {
+        return NextResponse.json({ error: 'VAT must be between 0 and 100%' }, { status: 400 })
+      }
+      data.vat_rate = body.vatRate
     }
     if (body.stock !== undefined) {
       if (typeof body.stock !== 'number' || !Number.isInteger(body.stock) || body.stock < 0) {

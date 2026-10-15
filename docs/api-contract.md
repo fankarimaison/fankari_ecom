@@ -1,4 +1,4 @@
-# API Contract — Terra & Thread (Handcrafted Tote Bags Store) — SUPABASE EDITION
+# API Contract — Fankari Maison (Handcrafted Tote Bags Store) — SUPABASE EDITION
 
 Shared contract between the backend and frontend. The frontend must be written against these
 shapes EXACTLY. The backend must implement these shapes EXACTLY.
@@ -96,7 +96,7 @@ Content keys: `brandName, announcement, heroTitle, heroSubtitle, heroImage, abou
 
 ## Seeded accounts (created by supabase/schema.sql)
 
-- ADMIN: `admin@terrathread.com` / `admin123`
+- ADMIN: `admin@fankarimaison.com` / `admin123`
 - CUSTOMER: `customer@example.com` / `customer123`
 
 ## Seeded data

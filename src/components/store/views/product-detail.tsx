@@ -7,7 +7,8 @@ import { apiGet, productsUrl, type Product } from "../api";
 import { useCartMutations } from "../cart-line";
 import { ProductCard, ProductCardSkeleton } from "../product-card";
 import { QtyStepper } from "../qty-stepper";
-import { formatPrice } from "@/lib/format";
+import { ProductPrice } from "../product-price";
+import { shippingPolicyText, useShipping } from "../hooks";
 import { useStore } from "@/lib/store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function ProductDetailView({ productId }: { productId: string }) {
   const navigate = useStore((s) => s.navigate);
   const [qty, setQty] = useState(1);
+  const shipping = useShipping();
   const { data: product, isLoading, isError, error } = useQuery({
     queryKey: ["product", productId],
     queryFn: async () => {
@@ -116,9 +118,7 @@ export function ProductDetailView({ productId }: { productId: string }) {
           <h1 className="font-display mt-3 text-3xl font-semibold leading-tight tracking-tight text-stone-900 sm:text-4xl">
             {product.name}
           </h1>
-          <p className="mt-3 text-2xl font-semibold text-primary">
-            {formatPrice(product.price)}
-          </p>
+          <ProductPrice product={product} showVatNote className="mt-3 text-2xl" />
 
           <div className="mt-2">
             {soldOut ? (
@@ -194,7 +194,7 @@ export function ProductDetailView({ productId }: { productId: string }) {
                 disabled={soldOut || addItem.isPending}
                 className="min-h-12 min-w-36 flex-1 rounded-full bg-card text-base"
                 onClick={() =>
-                  addToCart(product, qty, () => navigate({ name: "cart" }))
+                  addToCart(product, qty, () => navigate({ name: "checkout" }))
                 }
               >
                 Buy Now
@@ -204,7 +204,7 @@ export function ProductDetailView({ productId }: { productId: string }) {
 
           <div className="mt-5 flex items-center gap-2 text-sm text-muted-foreground">
             <Truck className="size-4 text-primary" aria-hidden />
-            Free shipping on orders over $75 — otherwise $6.99 flat.
+            {shippingPolicyText(shipping)}
           </div>
         </div>
       </div>

@@ -1,13 +1,18 @@
 -- ============================================================================
--- Terra & Thread — Handcrafted Tote Bags Store
+-- Fankari Maison — Handcrafted Tote Bags Store
 -- Supabase schema (single script — paste into Dashboard → SQL Editor → Run)
 --
--- Idempotent: safe to re-run. Creates tables, RLS policies, triggers,
--- atomic order RPCs and seeds products, site content and demo accounts.
+-- Idempotent: safe to re-run. Creates tables, RLS policies, atomic order RPCs
+-- and seeds products and site content.
 --
--- Demo accounts (email confirmation is bypassed for these):
---   ADMIN    admin@terrathread.com   / admin123
---   CUSTOMER customer@example.com    / customer123
+-- Authentication is Clerk, via Supabase's third-party auth integration
+-- (Dashboard → Authentication → Sign In / Providers → Third-party → Clerk).
+-- Requests carry the Clerk session token, so:
+--   auth.jwt() ->> 'sub'       the Clerk user id (user_…) — see current_user_id()
+--   auth.jwt() ->> 'email'     primary email     (custom session claim)
+--   auth.jwt() ->> 'name'      full name         (custom session claim)
+--   auth.jwt() ->> 'app_role'  'admin' for admins (custom claim from the
+--                              user's Clerk public metadata {"role":"admin"})
 -- ============================================================================
 
 create extension if not exists pgcrypto with schema extensions;
@@ -16,10 +21,11 @@ create extension if not exists pgcrypto with schema extensions;
 -- 1. Tables
 -- ============================================================================
 
--- Profiles extend Supabase auth users (1:1 with auth.users)
+-- Profiles mirror Clerk users (id = Clerk user id); kept in sync from the
+-- session token by public.sync_profile()
 create table if not exists public.profiles (
-  id         uuid primary key references auth.users (id) on delete cascade,
-  email      text not null unique,
+  id         text primary key,
+  email      text not null default '',
   name       text not null default '',
   role       text not null default 'CUSTOMER' check (role in ('CUSTOMER', 'ADMIN')),
   created_at timestamptz not null default now()
@@ -45,7 +51,7 @@ create table if not exists public.products (
 -- Cart items (one row per user per product; re-adding increments quantity)
 create table if not exists public.cart_items (
   id         uuid primary key default gen_random_uuid(),
-  user_id    uuid not null references public.profiles (id) on delete cascade,
+  user_id    text not null references public.profiles (id) on delete cascade,
   product_id uuid not null references public.products (id) on delete cascade,
   quantity   integer not null default 1,
   created_at timestamptz not null default now(),
@@ -55,7 +61,7 @@ create table if not exists public.cart_items (
 -- Orders (user_id references profiles so PostgREST can embed user:profiles)
 create table if not exists public.orders (
   id            uuid primary key default gen_random_uuid(),
-  user_id       uuid not null references public.profiles (id) on delete cascade,
+  user_id       text not null references public.profiles (id) on delete cascade,
   order_number  text not null unique,
   status        text not null default 'CONFIRMED'
                 check (status in ('PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED')),
@@ -90,6 +96,69 @@ create table if not exists public.site_content (
   updated_at timestamptz not null default now()
 );
 
+-- Pricing: VAT is added on top of the price; the discount is a % off the
+-- price. Unit price paid = price × (1 − discount%) × (1 + VAT%).
+-- Payment is Cash on Delivery only. (add column if not exists → also upgrades
+-- databases created by earlier versions of this script.)
+alter table public.products
+  add column if not exists vat_rate         numeric(5, 2) not null default 0
+    check (vat_rate >= 0 and vat_rate <= 100),
+  add column if not exists discount_percent numeric(5, 2) not null default 0
+    check (discount_percent >= 0 and discount_percent <= 100);
+
+alter table public.orders
+  add column if not exists discount       numeric(10, 2) not null default 0,
+  add column if not exists vat            numeric(10, 2) not null default 0,
+  add column if not exists payment_method text not null default 'COD'
+    constraint orders_payment_method_check check (payment_method in ('COD'));
+
+-- order_items.price is the unit price actually charged (after discount, incl.
+-- VAT); the rates are snapshotted alongside it.
+alter table public.order_items
+  add column if not exists discount_percent numeric(5, 2) not null default 0,
+  add column if not exists vat_rate         numeric(5, 2) not null default 0;
+
+-- Migration from Supabase Auth → Clerk (runs once, only on databases created by
+-- earlier versions of this script, where user ids were auth.users uuids).
+-- Supabase Auth accounts cannot sign in through Clerk, so their profiles are
+-- removed together with their carts and orders (cascade). Policies are dropped
+-- first because Postgres cannot change the type of a column a policy uses;
+-- section 4 recreates them.
+do $$
+declare
+  pol record;
+begin
+  if (select data_type from information_schema.columns
+      where table_schema = 'public' and table_name = 'profiles' and column_name = 'id') = 'uuid' then
+    drop trigger if exists on_auth_user_created on auth.users;
+
+    for pol in
+      select policyname, tablename from pg_policies
+      where schemaname = 'public'
+        and tablename in ('profiles', 'cart_items', 'orders', 'order_items')
+    loop
+      execute format('drop policy %I on public.%I', pol.policyname, pol.tablename);
+    end loop;
+
+    delete from public.profiles;
+
+    alter table public.cart_items drop constraint if exists cart_items_user_id_fkey;
+    alter table public.orders     drop constraint if exists orders_user_id_fkey;
+    alter table public.profiles   drop constraint if exists profiles_id_fkey;
+    alter table public.profiles   drop constraint if exists profiles_email_key;
+
+    alter table public.profiles   alter column id      type text;
+    alter table public.profiles   alter column email   set default '';
+    alter table public.cart_items alter column user_id type text;
+    alter table public.orders     alter column user_id type text;
+
+    alter table public.cart_items add constraint cart_items_user_id_fkey
+      foreign key (user_id) references public.profiles (id) on delete cascade;
+    alter table public.orders add constraint orders_user_id_fkey
+      foreign key (user_id) references public.profiles (id) on delete cascade;
+  end if;
+end $$;
+
 -- Indexes
 create index if not exists idx_products_category   on public.products (category);
 create index if not exists idx_products_featured   on public.products (featured);
@@ -99,47 +168,63 @@ create index if not exists idx_orders_created      on public.orders (created_at 
 create index if not exists idx_order_items_order   on public.order_items (order_id);
 
 -- ============================================================================
--- 2. Helper functions (security definer avoids RLS recursion on profiles)
+-- 2. Helper functions — identity comes from the Clerk session token
 -- ============================================================================
 
+-- Clerk user id of the caller (null when signed out)
+create or replace function public.current_user_id()
+returns text
+language sql stable
+as $$
+  select nullif(auth.jwt() ->> 'sub', '');
+$$;
+
+-- Admins carry {"role":"admin"} in their Clerk public metadata, surfaced as the
+-- signed `app_role` session claim — users cannot set it themselves.
 create or replace function public.is_admin()
 returns boolean
-language sql stable security definer
-set search_path = public
+language sql stable
 as $$
-  select exists (
-    select 1 from public.profiles
-    where id = auth.uid() and role = 'ADMIN'
-  );
+  select coalesce(auth.jwt() ->> 'app_role', '') = 'admin';
 $$;
 
 -- ============================================================================
--- 3. Auto-create a profile whenever a user signs up
---    (admin@terrathread.com is automatically granted the ADMIN role)
+-- 3. Profile sync — called by the API on each authenticated request.
+--    Creates the caller's profile on first sight and keeps email/name/role in
+--    step with Clerk. Only writes when something changed.
 -- ============================================================================
 
-create or replace function public.handle_new_user()
-returns trigger
+-- Supabase Auth signup trigger from earlier versions of this script
+drop trigger if exists on_auth_user_created on auth.users;
+drop function if exists public.handle_new_user();
+
+create or replace function public.sync_profile()
+returns public.profiles
 language plpgsql security definer
 set search_path = public
 as $$
+declare
+  v_id    text := public.current_user_id();
+  v_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+  v_name  text;
+  v_role  text := case when public.is_admin() then 'ADMIN' else 'CUSTOMER' end;
+  v_row   public.profiles;
 begin
-  insert into public.profiles (id, email, name, role)
-  values (
-    new.id,
-    lower(new.email),
-    coalesce(new.raw_user_meta_data ->> 'name', split_part(new.email, '@', 1)),
-    case when lower(new.email) = 'admin@terrathread.com' then 'ADMIN' else 'CUSTOMER' end
-  )
-  on conflict (id) do nothing;
-  return new;
+  if v_id is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
+  v_name := coalesce(nullif(trim(auth.jwt() ->> 'name'), ''), split_part(v_email, '@', 1));
+
+  insert into public.profiles as p (id, email, name, role)
+  values (v_id, v_email, v_name, v_role)
+  on conflict (id) do update
+    set email = excluded.email, name = excluded.name, role = excluded.role
+    where (p.email, p.name, p.role) is distinct from (excluded.email, excluded.name, excluded.role);
+
+  select * into v_row from public.profiles where id = v_id;
+  return v_row;
 end;
 $$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function public.handle_new_user();
 
 -- ============================================================================
 -- 4. Enable RLS + policies
@@ -153,10 +238,10 @@ alter table public.order_items  enable row level security;
 alter table public.site_content enable row level security;
 
 -- profiles: users read their own, admins read everyone (no client writes —
--- inserts happen via the signup trigger, updates are not exposed)
+-- rows are written only by public.sync_profile())
 drop policy if exists "profiles_select" on public.profiles;
 create policy "profiles_select" on public.profiles
-  for select using (id = auth.uid() or public.is_admin());
+  for select using (id = public.current_user_id() or public.is_admin());
 
 -- products: world-readable catalog, admin-only writes
 drop policy if exists "products_select" on public.products;
@@ -178,28 +263,28 @@ create policy "products_delete" on public.products
 -- cart_items: strictly owner-scoped
 drop policy if exists "cart_select" on public.cart_items;
 create policy "cart_select" on public.cart_items
-  for select using (user_id = auth.uid());
+  for select using (user_id = public.current_user_id());
 
 drop policy if exists "cart_insert" on public.cart_items;
 create policy "cart_insert" on public.cart_items
-  for insert with check (user_id = auth.uid());
+  for insert with check (user_id = public.current_user_id());
 
 drop policy if exists "cart_update" on public.cart_items;
 create policy "cart_update" on public.cart_items
-  for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+  for update using (user_id = public.current_user_id()) with check (user_id = public.current_user_id());
 
 drop policy if exists "cart_delete" on public.cart_items;
 create policy "cart_delete" on public.cart_items
-  for delete using (user_id = auth.uid());
+  for delete using (user_id = public.current_user_id());
 
 -- orders: owner reads/creates, admin reads/updates everything
 drop policy if exists "orders_select" on public.orders;
 create policy "orders_select" on public.orders
-  for select using (user_id = auth.uid() or public.is_admin());
+  for select using (user_id = public.current_user_id() or public.is_admin());
 
 drop policy if exists "orders_insert" on public.orders;
 create policy "orders_insert" on public.orders
-  for insert with check (user_id = auth.uid());
+  for insert with check (user_id = public.current_user_id());
 
 drop policy if exists "orders_update" on public.orders;
 create policy "orders_update" on public.orders
@@ -211,7 +296,7 @@ create policy "order_items_select" on public.order_items
   for select using (
     exists (
       select 1 from public.orders o
-      where o.id = order_id and (o.user_id = auth.uid() or public.is_admin())
+      where o.id = order_id and (o.user_id = public.current_user_id() or public.is_admin())
     )
   );
 
@@ -220,7 +305,7 @@ create policy "order_items_insert" on public.order_items
   for insert with check (
     exists (
       select 1 from public.orders o
-      where o.id = order_id and o.user_id = auth.uid()
+      where o.id = order_id and o.user_id = public.current_user_id()
     )
   );
 
@@ -241,32 +326,88 @@ drop policy if exists "content_delete" on public.site_content;
 create policy "content_delete" on public.site_content
   for delete using (public.is_admin());
 
+-- Storage: the public `fankari` bucket holds every site image. Anyone can read
+-- (public URLs); only admins can upload, replace or delete — this is what
+-- lets Admin → Products / Content upload images with the admin's own session.
+insert into storage.buckets (id, name, public)
+values ('fankari', 'fankari', true)
+on conflict (id) do nothing;
+
+drop policy if exists "fankari_admin_select" on storage.objects;
+create policy "fankari_admin_select" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'fankari' and public.is_admin());
+
+drop policy if exists "fankari_admin_insert" on storage.objects;
+create policy "fankari_admin_insert" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'fankari' and public.is_admin());
+
+drop policy if exists "fankari_admin_update" on storage.objects;
+create policy "fankari_admin_update" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'fankari' and public.is_admin())
+  with check (bucket_id = 'fankari' and public.is_admin());
+
+drop policy if exists "fankari_admin_delete" on storage.objects;
+create policy "fankari_admin_delete" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'fankari' and public.is_admin());
+
 -- ============================================================================
 -- 5. Atomic order placement (transactional: validate stock → order →
 --    snapshot items → decrement stock → clear cart)
 --    Errors raised as tokens understood by the API:
---      AUTH_REQUIRED / EMPTY_CART / STOCK:<product name>:<stock left>
+--      AUTH_REQUIRED / PAYMENT_METHOD / EMPTY_CART / STOCK:<product name>:<stock left>
 -- ============================================================================
 
+-- Shipping charge for an items total (after discount, incl. VAT), from the
+-- admin-editable site_content rows — mirrors shippingFor() in
+-- src/lib/pricing.ts, with the same defaults when a row is missing:
+--   shippingFee            flat charge per order          (6.99)
+--   freeShippingEnabled    'true' waives it at threshold  ('true')
+--   freeShippingThreshold  items total that ships free    (75)
+create or replace function public.shipping_for(p_items_total numeric)
+returns numeric
+language sql stable
+set search_path = public
+as $$
+  select case
+    when coalesce((select trim(value) from public.site_content where key = 'freeShippingEnabled'), 'true') = 'true'
+     and p_items_total >= coalesce((select trim(value)::numeric from public.site_content where key = 'freeShippingThreshold'), 75)
+    then 0
+    else round(coalesce((select trim(value)::numeric from public.site_content where key = 'shippingFee'), 6.99), 2)
+  end;
+$$;
+
+-- Earlier versions had no payment-method parameter; drop that signature so
+-- the RPC stays unambiguous (create or replace would add an overload).
+drop function if exists public.place_order(text, text, text, text, text, text, text);
+
 create or replace function public.place_order(
-  p_customer_name text,
-  p_email         text,
-  p_phone         text default '',
-  p_address       text default '',
-  p_city          text default '',
-  p_postal_code   text default '',
-  p_notes         text default ''
+  p_customer_name  text,
+  p_email          text,
+  p_phone          text default '',
+  p_address        text default '',
+  p_city           text default '',
+  p_postal_code    text default '',
+  p_notes          text default '',
+  p_payment_method text default null
 )
 returns jsonb
 language plpgsql security definer
 set search_path = public
 as $$
 declare
-  v_user         uuid := auth.uid();
+  v_user         text := public.current_user_id();
   v_line         record;
   v_order_id     uuid;
   v_order_number text;
-  v_subtotal     numeric(10, 2) := 0;
+  v_subtotal     numeric(10, 2) := 0;  -- Σ price × qty (before discount and VAT)
+  v_discount     numeric(10, 2) := 0;
+  v_vat          numeric(10, 2) := 0;
+  v_line_base    numeric(10, 2);
+  v_line_disc    numeric(10, 2);
   v_shipping     numeric(10, 2);
   v_total        numeric(10, 2);
   v_count        integer := 0;
@@ -275,11 +416,18 @@ begin
     raise exception 'AUTH_REQUIRED';
   end if;
 
+  -- Payment methods offered at checkout — keep in step with PAYMENT_METHODS
+  -- in src/lib/pricing.ts and orders_payment_method_check.
+  if p_payment_method is null or not (p_payment_method = any (array['COD'])) then
+    raise exception 'PAYMENT_METHOD';
+  end if;
+
   -- Lock product rows and validate every cart line
   for v_line in
     select ci.product_id, ci.quantity,
            p.name as p_name, p.price as p_price, p.image as p_image,
-           p.stock as p_stock, p.active as p_active
+           p.stock as p_stock, p.active as p_active,
+           p.discount_percent as p_discount, p.vat_rate as p_vat
     from public.cart_items ci
     join public.products p on p.id = ci.product_id
     where ci.user_id = v_user
@@ -289,25 +437,26 @@ begin
     if not v_line.p_active or v_line.p_stock < v_line.quantity then
       raise exception 'STOCK:%:%', v_line.p_name, v_line.p_stock;
     end if;
-    v_subtotal := v_subtotal + v_line.p_price * v_line.quantity;
-    v_count    := v_count + 1;
+    -- Per line, rounded to paise (mirrors src/lib/pricing.ts)
+    v_line_base := round(v_line.p_price * v_line.quantity, 2);
+    v_line_disc := round(v_line_base * v_line.p_discount / 100, 2);
+    v_subtotal  := v_subtotal + v_line_base;
+    v_discount  := v_discount + v_line_disc;
+    v_vat       := v_vat + round((v_line_base - v_line_disc) * v_line.p_vat / 100, 2);
+    v_count     := v_count + 1;
   end loop;
 
   if v_count = 0 then
     raise exception 'EMPTY_CART';
   end if;
 
-  -- Free shipping at/above $75, flat $6.99 otherwise
-  if v_subtotal >= 75 then
-    v_shipping := 0;
-  else
-    v_shipping := 6.99;
-  end if;
-  v_total := v_subtotal + v_shipping;
+  -- Shipping settings from Admin → Content (see shipping_for)
+  v_shipping := public.shipping_for(v_subtotal - v_discount + v_vat);
+  v_total := v_subtotal - v_discount + v_vat + v_shipping;
 
   -- Unique order number with retry on collision
   loop
-    v_order_number := 'TT-' || (
+    v_order_number := 'FM-' || (
       select array_to_string(array(
         select substr('ABCDEFGHJKMNPQRSTUVWXYZ23456789', floor(random() * 31)::int + 1, 1)
         from generate_series(1, 6)
@@ -315,11 +464,11 @@ begin
     );
     begin
       insert into public.orders (
-        user_id, order_number, status, subtotal, shipping, total,
-        customer_name, email, phone, address, city, postal_code, notes
+        user_id, order_number, status, subtotal, discount, vat, shipping, total,
+        payment_method, customer_name, email, phone, address, city, postal_code, notes
       ) values (
-        v_user, v_order_number, 'CONFIRMED', v_subtotal, v_shipping, v_total,
-        p_customer_name, p_email, p_phone, p_address, p_city, p_postal_code, p_notes
+        v_user, v_order_number, 'CONFIRMED', v_subtotal, v_discount, v_vat, v_shipping, v_total,
+        p_payment_method, p_customer_name, p_email, p_phone, p_address, p_city, p_postal_code, p_notes
       ) returning id into v_order_id;
       exit;
     exception when unique_violation then
@@ -328,8 +477,11 @@ begin
   end loop;
 
   -- Snapshot line items
-  insert into public.order_items (order_id, product_id, name, price, quantity, image)
-  select v_order_id, ci.product_id, p.name, p.price, ci.quantity, p.image
+  insert into public.order_items
+    (order_id, product_id, name, price, quantity, image, discount_percent, vat_rate)
+  select v_order_id, ci.product_id, p.name,
+         round(p.price * (1 - p.discount_percent / 100) * (1 + p.vat_rate / 100), 2),
+         ci.quantity, p.image, p.discount_percent, p.vat_rate
   from public.cart_items ci
   join public.products p on p.id = ci.product_id
   where ci.user_id = v_user;
@@ -347,14 +499,16 @@ begin
   return (
     select jsonb_build_object(
       'id', o.id, 'orderNumber', o.order_number, 'status', o.status,
-      'subtotal', o.subtotal, 'shipping', o.shipping, 'total', o.total,
+      'subtotal', o.subtotal, 'discount', o.discount, 'vat', o.vat,
+      'shipping', o.shipping, 'total', o.total, 'paymentMethod', o.payment_method,
       'customerName', o.customer_name, 'email', o.email, 'phone', o.phone,
       'address', o.address, 'city', o.city, 'postalCode', o.postal_code,
       'notes', o.notes, 'createdAt', o.created_at,
       'items', (
         select coalesce(jsonb_agg(jsonb_build_object(
           'id', oi.id, 'productId', oi.product_id, 'name', oi.name,
-          'price', oi.price, 'quantity', oi.quantity, 'image', oi.image
+          'price', oi.price, 'quantity', oi.quantity, 'image', oi.image,
+          'discountPercent', oi.discount_percent, 'vatRate', oi.vat_rate
         ) order by oi.id), '[]'::jsonb)
         from public.order_items oi
         where oi.order_id = o.id
@@ -401,7 +555,8 @@ begin
   return (
     select jsonb_build_object(
       'id', o.id, 'orderNumber', o.order_number, 'status', o.status,
-      'subtotal', o.subtotal, 'shipping', o.shipping, 'total', o.total,
+      'subtotal', o.subtotal, 'discount', o.discount, 'vat', o.vat,
+      'shipping', o.shipping, 'total', o.total, 'paymentMethod', o.payment_method,
       'customerName', o.customer_name, 'email', o.email, 'phone', o.phone,
       'address', o.address, 'city', o.city, 'postalCode', o.postal_code,
       'notes', o.notes, 'createdAt', o.created_at,
@@ -412,7 +567,8 @@ begin
       'items', (
         select coalesce(jsonb_agg(jsonb_build_object(
           'id', oi.id, 'productId', oi.product_id, 'name', oi.name,
-          'price', oi.price, 'quantity', oi.quantity, 'image', oi.image
+          'price', oi.price, 'quantity', oi.quantity, 'image', oi.image,
+          'discountPercent', oi.discount_percent, 'vatRate', oi.vat_rate
         ) order by oi.id), '[]'::jsonb)
         from public.order_items oi
         where oi.order_id = o.id
@@ -425,25 +581,31 @@ end;
 $$;
 
 -- Only signed-in users may call the RPCs (defense in depth — the functions
--- also verify auth.uid() / is_admin() internally)
+-- also verify current_user_id() / is_admin() internally)
 revoke execute on function public.place_order from anon, public;
 grant  execute on function public.place_order to authenticated;
 
 revoke execute on function public.admin_cancel_order from anon, public;
 grant  execute on function public.admin_cancel_order to authenticated;
 
+revoke execute on function public.sync_profile from anon, public;
+grant  execute on function public.sync_profile to authenticated;
+
 -- ============================================================================
 -- 7. Seed site content (idempotent — re-runs never overwrite admin edits)
 -- ============================================================================
 
 insert into public.site_content (key, value) values
-  ('brandName',     'Terra & Thread'),
-  ('announcement',  'Free shipping on all orders over $75 · Handcrafted in small batches'),
+  ('brandName',     'Fankari Maison'),
+  ('announcement',  'Free shipping on all orders over ₹75 · Handcrafted in small batches'),
   ('heroTitle',     'Carried by Hand, Made with Heart'),
   ('heroSubtitle',  'Small-batch tote bags handcrafted from natural canvas, jute and full-grain leather. Built for everyday adventures, designed to last a lifetime.'),
-  ('heroImage',     '/images/hero.jpg'),
+  ('heroImage',     'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/hero.jpg'),
   ('aboutTitle',    'Crafted Slowly, Made to Last'),
-  ('aboutText',     'Every Terra & Thread bag begins as raw natural fibre — sturdy cotton canvas, rustic jute, buttery full-grain leather — and passes through the hands of skilled artisans who cut, stitch and finish each piece in small batches. We believe the things you carry every day should be beautiful, honest and built to age gracefully. No mass production, no shortcuts: just time-honoured craft and materials that get better with every year you carry them.')
+  ('aboutText',     'Every Fankari Maison bag begins as raw natural fibre — sturdy cotton canvas, rustic jute, buttery full-grain leather — and passes through the hands of skilled artisans who cut, stitch and finish each piece in small batches. We believe the things you carry every day should be beautiful, honest and built to age gracefully. No mass production, no shortcuts: just time-honoured craft and materials that get better with every year you carry them.'),
+  ('shippingFee',           '6.99'),
+  ('freeShippingEnabled',   'true'),
+  ('freeShippingThreshold', '75')
 on conflict (key) do nothing;
 
 -- ============================================================================
@@ -453,177 +615,55 @@ on conflict (key) do nothing;
 insert into public.products (name, slug, description, price, stock, category, image, materials, dimensions, featured) values
   ('Classic Canvas Everyday Tote', 'classic-canvas-everyday-tote',
    'Our signature everyday tote, handcrafted from 14oz natural cotton canvas with reinforced double-stitched handles. Roomy enough for groceries, laptops, or a weekend escape — this is the bag you will reach for every single day.',
-   42, 24, 'Canvas', '/images/p1.jpg', '14oz natural cotton canvas, cotton webbing handles', '38 × 35 × 12 cm', true),
+   42, 24, 'Canvas', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p1.jpg', '14oz natural cotton canvas, cotton webbing handles', '38 × 35 × 12 cm', true),
   ('Market Day Waxed Canvas Tote', 'market-day-waxed-canvas-tote',
    'Built for the weekly market run and years beyond it. Heavy waxed canvas weathers beautifully, while vegetable-tanned leather straps and solid brass hardware add rugged refinement. Water-resistant and gets better with age.',
-   58, 16, 'Canvas', '/images/p2.jpg', 'Waxed cotton canvas, vegetable-tanned leather, brass hardware', '40 × 38 × 14 cm', true),
+   58, 16, 'Canvas', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p2.jpg', 'Waxed cotton canvas, vegetable-tanned leather, brass hardware', '40 × 38 × 14 cm', true),
   ('Boho Straw Beach Tote', 'boho-straw-beach-tote',
    'Hand-woven by artisans from sustainably harvested straw, finished with playful pom-pom tassels. Spacious enough for towels, sunscreen and a good book — your perfect sunshine companion.',
-   49, 20, 'Straw & Jute', '/images/p3.jpg', 'Natural woven straw, cotton tassels, cotton lining', '45 × 35 × 15 cm', true),
+   49, 20, 'Straw & Jute', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p3.jpg', 'Natural woven straw, cotton tassels, cotton lining', '45 × 35 × 15 cm', true),
   ('Jute Market Bag', 'jute-market-bag',
    'A plastic-free staple for farmers market mornings. Sturdy woven jute with smooth wooden handles and an interior pocket for your phone and keys. Strong enough to carry a week of produce.',
-   36, 30, 'Straw & Jute', '/images/p4.jpg', 'Woven jute, wooden handles, cotton lining', '42 × 36 × 14 cm', false),
+   36, 30, 'Straw & Jute', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p4.jpg', 'Woven jute, wooden handles, cotton lining', '42 × 36 × 14 cm', false),
   ('Heritage Leather-Trim Tote', 'heritage-leather-trim-tote',
    'Where canvas meets craftsmanship: durable cotton canvas body trimmed in full-grain cognac leather. Fits a 15" laptop with room to spare. Hand-burnished edges and saddle-stitched stress points make this a decade-long companion.',
-   89, 12, 'Leather Trim', '/images/p5.jpg', 'Cotton canvas, full-grain leather trim, brass rivets', '40 × 30 × 13 cm', true),
+   89, 12, 'Leather Trim', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p5.jpg', 'Cotton canvas, full-grain leather trim, brass rivets', '40 × 30 × 13 cm', true),
   ('Saddle Leather Shopper', 'saddle-leather-shopper',
    'Our most luxurious carry. Cut from a single hide of espresso full-grain leather and finished with a hand-set brass buckle. Designed to be carried daily and patina into a one-of-a-kind heirloom.',
-   120, 8, 'Leather Trim', '/images/p6.jpg', 'Full-grain leather, solid brass hardware, suede lining', '42 × 32 × 14 cm', true),
+   120, 8, 'Leather Trim', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p6.jpg', 'Full-grain leather, solid brass hardware, suede lining', '42 × 32 × 14 cm', true),
   ('Minimalist Linen Carryall', 'minimalist-linen-carryall',
    'Quietly elegant and featherlight. Made from washed European linen with clean French seams — perfect for errands, work, or a day out. Softens with every wash and folds flat when not in use.',
-   45, 22, 'Linen', '/images/p7.jpg', '100% washed European linen', '38 × 34 × 10 cm', false),
+   45, 22, 'Linen', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p7.jpg', '100% washed European linen', '38 × 34 × 10 cm', false),
   ('Embroidered Meadow Tote', 'embroidered-meadow-tote',
    'Each meadow tote is hand-embroidered with wildflowers in terracotta and sage thread — no two are exactly alike. A wearable piece of slow craft that carries your essentials and a story.',
-   64, 10, 'Special Edition', '/images/p8.jpg', 'Heavy cotton canvas, cotton embroidery thread', '38 × 36 × 12 cm', true),
+   64, 10, 'Special Edition', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p8.jpg', 'Heavy cotton canvas, cotton embroidery thread', '38 × 36 × 12 cm', true),
   ('Quilted Patchwork Tote', 'quilted-patchwork-tote',
    'Sewn from repurposed fabric squares in warm earth tones, each patchwork tote is one of a kind. Fully quilted and lined for structure, with a nod to generations of thrifty, beautiful handcraft.',
-   72, 9, 'Special Edition', '/images/p9.jpg', 'Upcycled cotton fabrics, cotton batting, canvas lining', '39 × 34 × 13 cm', false),
+   72, 9, 'Special Edition', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p9.jpg', 'Upcycled cotton fabrics, cotton batting, canvas lining', '39 × 34 × 13 cm', false),
   ('Macramé Fringe Festival Bag', 'macrame-fringe-festival-bag',
    'Hand-knotted cotton cord in a boho fringe silhouette that sways as you walk. Made for festival days, beach strolls, and everything golden-hour. Fully lined so nothing slips through.',
-   54, 14, 'Special Edition', '/images/p10.jpg', 'Braided cotton cord, cotton lining', '36 × 38 × 11 cm', false)
+   54, 14, 'Special Edition', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p10.jpg', 'Braided cotton cord, cotton lining', '36 × 38 × 11 cm', false)
 on conflict (slug) do nothing;
 
 -- ============================================================================
--- 9. Seed demo accounts (confirmed emails, idempotent)
---    auth.users inserts fire the signup trigger → profiles are created
---
---    NOTE: we deliberately avoid ON CONFLICT here. auth.users enforces email
---    uniqueness with a PARTIAL unique index (users_email_partial_key, where
---    is_sso_user = false), and partial indexes cannot be used as a plain
---    `ON CONFLICT (email)` arbiter (that raises SQLSTATE 42P10). A
---    where-not-exists guard achieves the same idempotency.
+-- Images live in the public Supabase Storage bucket `fankari` (images/…).
+-- Repoint rows seeded by earlier versions of this script at local /images/…
+-- paths. Idempotent: only rewrites values that still start with /images/.
 -- ============================================================================
 
-insert into auth.users (
-  instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
-  raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
-  confirmation_token, recovery_token, email_change_token_new, email_change
-)
-select
-  '00000000-0000-0000-0000-000000000000',
-  '11111111-1111-1111-1111-111111111111',
-  'authenticated', 'authenticated',
-  'admin@terrathread.com',
-  crypt('admin123', gen_salt('bf')),
-  now(),
-  '{"provider":"email","providers":["email"]}',
-  '{"name":"Studio Admin"}',
-  now(), now(), '', '', '', ''
-where not exists (
-  select 1 from auth.users where email = 'admin@terrathread.com'
-);
+update public.products
+set image = 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari' || image
+where image like '/images/%';
 
-insert into auth.users (
-  instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
-  raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
-  confirmation_token, recovery_token, email_change_token_new, email_change
-)
-select
-  '00000000-0000-0000-0000-000000000000',
-  '22222222-2222-2222-2222-222222222222',
-  'authenticated', 'authenticated',
-  'customer@example.com',
-  crypt('customer123', gen_salt('bf')),
-  now(),
-  '{"provider":"email","providers":["email"]}',
-  '{"name":"Demo Customer"}',
-  now(), now(), '', '', '', ''
-where not exists (
-  select 1 from auth.users where email = 'customer@example.com'
-);
+update public.site_content
+set value = 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari' || value
+where key = 'heroImage' and value like '/images/%';
 
--- Matching auth.identities rows (needed for a fully valid auth user).
---
--- The auth.identities schema varies across GoTrue versions: some projects have
--- (provider_id, identity_id, identity_data), newer ones dropped `identity_id`,
--- very old ones lack `identity_data`. Detect the actual columns at runtime and
--- insert only what exists, so this works everywhere.
-do $$
-declare
-  u                 record;
-  has_provider_id   boolean;
-  has_identity_id   boolean;
-  has_identity_data boolean;
-begin
-  select
-    exists (select 1 from information_schema.columns
-            where table_schema = 'auth' and table_name = 'identities' and column_name = 'provider_id'),
-    exists (select 1 from information_schema.columns
-            where table_schema = 'auth' and table_name = 'identities' and column_name = 'identity_id'),
-    exists (select 1 from information_schema.columns
-            where table_schema = 'auth' and table_name = 'identities' and column_name = 'identity_data')
-  into has_provider_id, has_identity_id, has_identity_data;
-
-  for u in
-    select w.id, w.email
-    from auth.users w
-    where w.email in ('admin@terrathread.com', 'customer@example.com')
-      and not exists (
-        select 1 from auth.identities i
-        where i.user_id = w.id and i.provider = 'email'
-      )
-  loop
-    if has_identity_id and has_identity_data then
-      -- Modern schema: provider_id identifies the provider, identity_id the
-      -- identity row, identity_data carries the provider payload.
-      insert into auth.identities
-        (user_id, provider_id, provider, identity_id, identity_data, last_sign_in_at, created_at, updated_at)
-      values (
-        u.id, 'email', 'email', u.id::text,
-        jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
-        now(), now(), now()
-      );
-    elsif has_identity_id then
-      -- Modern schema before identity_data existed.
-      insert into auth.identities
-        (user_id, provider_id, provider, identity_id, last_sign_in_at, created_at, updated_at)
-      values (u.id, 'email', 'email', u.id::text, now(), now(), now());
-    elsif has_provider_id and has_identity_data then
-      -- Newer schema with identity_id dropped.
-      insert into auth.identities
-        (user_id, provider_id, provider, identity_data, last_sign_in_at, created_at, updated_at)
-      values (
-        u.id, 'email', 'email',
-        jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
-        now(), now(), now()
-      );
-    elsif has_provider_id then
-      -- Legacy schema: provider_id held the external identity id.
-      insert into auth.identities
-        (user_id, provider_id, provider, last_sign_in_at, created_at, updated_at)
-      values (u.id, u.id::text, 'email', now(), now(), now());
-    else
-      -- Minimal fallback.
-      insert into auth.identities
-        (user_id, provider, last_sign_in_at, created_at, updated_at)
-      values (u.id, 'email', now(), now(), now());
-    end if;
-  end loop;
-end $$;
-
--- Make sure passwords/confirmation are correct even if the users already existed
-update auth.users
-set encrypted_password = crypt('admin123', gen_salt('bf')),
-    email_confirmed_at = coalesce(email_confirmed_at, now())
-where email = 'admin@terrathread.com';
-
-update auth.users
-set encrypted_password = crypt('customer123', gen_salt('bf')),
-    email_confirmed_at = coalesce(email_confirmed_at, now())
-where email = 'customer@example.com';
-
--- Backfill profiles for any user created before this schema was applied
-insert into public.profiles (id, email, name, role)
-select u.id, lower(u.email),
-       coalesce(u.raw_user_meta_data ->> 'name', split_part(u.email, '@', 1)),
-       'CUSTOMER'
-from auth.users u
-left join public.profiles p on p.id = u.id
-where p.id is null
-on conflict (id) do nothing;
-
--- Grant the admin role to the seeded admin email
-update public.profiles set role = 'ADMIN' where email = 'admin@terrathread.com';
+-- Prices are shown in Indian Rupees; update the seeded announcement if it
+-- still quotes the old dollar threshold.
+update public.site_content
+set value = replace(value, '$75', '₹75')
+where key = 'announcement' and value like '%$75%';
 
 -- ============================================================================
 -- Done. Supabase auto-reloads the PostgREST schema cache after DDL runs in

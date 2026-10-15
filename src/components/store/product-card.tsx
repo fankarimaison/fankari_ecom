@@ -3,6 +3,8 @@
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { formatPrice } from "@/lib/format";
+import { unitPrice } from "@/lib/pricing";
+import { ProductPrice } from "./product-price";
 import type { Product } from "./api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,7 +23,7 @@ export function ProductCard({ product }: { product: Product }) {
       onClick={() => navigate({ name: "product", productId: product.id })}
       disabled={soldOut}
       className="group text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-xl"
-      aria-label={`${product.name} — ${formatPrice(product.price)}${soldOut ? " (sold out)" : ""}`}
+      aria-label={`${product.name} — ${formatPrice(unitPrice(product))}${soldOut ? " (sold out)" : ""}`}
     >
       <Card className="overflow-hidden border-border/80 bg-card pt-0 gap-0 shadow-sm transition-shadow group-hover:shadow-md">
         <div className="relative aspect-square overflow-hidden bg-muted">
@@ -56,9 +58,7 @@ export function ProductCard({ product }: { product: Product }) {
           <h3 className="font-display mt-1 line-clamp-2 min-h-[2.5rem] text-[15px] leading-snug font-semibold text-foreground sm:text-base">
             {product.name}
           </h3>
-          <p className="mt-1.5 text-sm font-semibold text-primary sm:text-[15px]">
-            {formatPrice(product.price)}
-          </p>
+          <ProductPrice product={product} className="mt-1.5 text-sm sm:text-[15px]" />
         </CardContent>
       </Card>
     </motion.button>
