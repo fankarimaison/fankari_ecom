@@ -63,7 +63,7 @@ export function AdminDashboard({
       label: "Customers",
       value: s ? String(s.customers) : "—",
       icon: Users,
-      hint: "Registered accounts",
+      hint: "Unique checkout emails",
     },
     {
       label: "Low stock",

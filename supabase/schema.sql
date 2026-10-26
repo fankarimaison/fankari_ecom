@@ -5,14 +5,20 @@
 -- Idempotent: safe to re-run. Creates tables, RLS policies, atomic order RPCs
 -- and seeds products and site content.
 --
--- Authentication is Clerk, via Supabase's third-party auth integration
--- (Dashboard → Authentication → Sign In / Providers → Third-party → Clerk).
--- Requests carry the Clerk session token, so:
---   auth.jwt() ->> 'sub'       the Clerk user id (user_…) — see current_user_id()
---   auth.jwt() ->> 'email'     primary email     (custom session claim)
---   auth.jwt() ->> 'name'      full name         (custom session claim)
---   auth.jwt() ->> 'app_role'  'admin' for admins (custom claim from the
---                              user's Clerk public metadata {"role":"admin"})
+-- Shoppers never sign in: the bag lives in their browser and place_order()
+-- takes guest orders. Only the studio admin signs in.
+--
+-- Authentication is Supabase Auth (email + password) for the admin only.
+-- Create the admin in Dashboard → Authentication → Users → Add user, turn
+-- off "Allow new users to sign up" (Authentication → Sign In / Providers),
+-- then grant the admin role — only the service role / SQL can set it:
+--   update auth.users
+--   set raw_app_meta_data = raw_app_meta_data || '{"role":"admin"}'
+--   where email = 'owner@example.com';
+-- Requests carry the Supabase session token, so:
+--   auth.jwt() ->> 'sub'                     the auth user id — see current_user_id()
+--   auth.jwt() ->> 'email'                   email
+--   auth.jwt() -> 'app_metadata' ->> 'role'  'admin' for admins — see is_admin()
 -- ============================================================================
 
 create extension if not exists pgcrypto with schema extensions;
@@ -21,8 +27,8 @@ create extension if not exists pgcrypto with schema extensions;
 -- 1. Tables
 -- ============================================================================
 
--- Profiles mirror Clerk users (id = Clerk user id); kept in sync from the
--- session token by public.sync_profile()
+-- Profiles mirror signed-in users (id = auth user id as text); kept in sync
+-- from the session token by public.sync_profile()
 create table if not exists public.profiles (
   id         text primary key,
   email      text not null default '',
@@ -99,8 +105,8 @@ create table if not exists public.site_content (
 
 -- Pricing: VAT is added on top of the price; the discount is a % off the
 -- price. Unit price paid = price × (1 − discount%) × (1 + VAT%).
--- Payment is Cash on Delivery only. (add column if not exists → also upgrades
--- databases created by earlier versions of this script.)
+-- (add column if not exists → also upgrades databases created by earlier
+-- versions of this script.)
 alter table public.products
   add column if not exists vat_rate         numeric(5, 2) not null default 0
     check (vat_rate >= 0 and vat_rate <= 100),
@@ -112,6 +118,13 @@ alter table public.orders
   add column if not exists vat            numeric(10, 2) not null default 0,
   add column if not exists payment_method text not null default 'COD'
     constraint orders_payment_method_check check (payment_method in ('COD'));
+
+-- Payment is arranged on WhatsApp: the buyer sends the order to the seller
+-- there after checkout. COD stays valid for orders placed before the switch.
+alter table public.orders drop constraint if exists orders_payment_method_check;
+alter table public.orders add constraint orders_payment_method_check
+  check (payment_method in ('WHATSAPP', 'COD'));
+alter table public.orders alter column payment_method set default 'WHATSAPP';
 
 -- order_items.price is the unit price actually charged (after discount, incl.
 -- VAT); the rates are snapshotted alongside it.
@@ -130,6 +143,54 @@ alter table public.orders
 alter table public.orders drop constraint if exists orders_status_check;
 alter table public.orders add constraint orders_status_check check (status in (
   'PENDING', 'CONFIRMED', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'));
+
+-- Product categories (Admin → Categories). products.category holds the
+-- category name; renaming a category renames it on its products too (API).
+create table if not exists public.categories (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null unique,
+  image      text not null default '',
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+-- FAQ page (Admin → FAQ). Unpublished questions are hidden from shoppers.
+create table if not exists public.faqs (
+  id         uuid primary key default gen_random_uuid(),
+  question   text not null,
+  answer     text not null,
+  sort_order integer not null default 0,
+  published  boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+-- Care instructions shown on the product page (one tip per line)
+alter table public.products
+  add column if not exists care_instructions text not null default '';
+
+-- Product gallery: extra photos and videos shown on the product page after the
+-- main image, in order — [{ "type": "image" | "video", "url": "https://…" }].
+-- Files live in the `fankari` bucket (images/products/, videos/products/).
+alter table public.products
+  add column if not exists gallery jsonb not null default '[]'::jsonb;
+
+-- Contact us requests (public form → Admin → Messages). Written only by
+-- public.submit_contact_request(); admins read them and mark them handled.
+create table if not exists public.contact_requests (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  phone      text not null default '',
+  email      text not null,
+  message    text not null,
+  handled    boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_contact_requests_created on public.contact_requests (created_at desc);
+
+-- Guest checkout: shoppers no longer sign in, so new orders have no user
+-- (user_id stays for orders placed by older, account-based versions).
+alter table public.orders alter column user_id drop not null;
 
 -- Order timeline: one row per status change or admin note
 create table if not exists public.order_events (
@@ -198,10 +259,10 @@ create index if not exists idx_order_events_order  on public.order_events (order
 create index if not exists idx_orders_number_lower on public.orders (lower(order_number));
 
 -- ============================================================================
--- 2. Helper functions — identity comes from the Clerk session token
+-- 2. Helper functions — identity comes from the Supabase Auth session token
 -- ============================================================================
 
--- Clerk user id of the caller (null when signed out)
+-- Auth user id of the caller (null when signed out)
 create or replace function public.current_user_id()
 returns text
 language sql stable
@@ -209,19 +270,19 @@ as $$
   select nullif(auth.jwt() ->> 'sub', '');
 $$;
 
--- Admins carry {"role":"admin"} in their Clerk public metadata, surfaced as the
--- signed `app_role` session claim — users cannot set it themselves.
+-- Admins carry {"role":"admin"} in their Supabase app_metadata (signed into
+-- the session token) — users cannot set app_metadata themselves.
 create or replace function public.is_admin()
 returns boolean
 language sql stable
 as $$
-  select coalesce(auth.jwt() ->> 'app_role', '') = 'admin';
+  select coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') = 'admin';
 $$;
 
 -- ============================================================================
 -- 3. Profile sync — called by the API on each authenticated request.
 --    Creates the caller's profile on first sight and keeps email/name/role in
---    step with Clerk. Only writes when something changed.
+--    step with Supabase Auth. Only writes when something changed.
 -- ============================================================================
 
 -- Supabase Auth signup trigger from earlier versions of this script
@@ -243,7 +304,11 @@ begin
   if v_id is null then
     raise exception 'AUTH_REQUIRED';
   end if;
-  v_name := coalesce(nullif(trim(auth.jwt() ->> 'name'), ''), split_part(v_email, '@', 1));
+  v_name := coalesce(
+    nullif(trim(auth.jwt() -> 'user_metadata' ->> 'name'), ''),
+    nullif(trim(auth.jwt() -> 'user_metadata' ->> 'full_name'), ''),
+    split_part(v_email, '@', 1)
+  );
 
   insert into public.profiles as p (id, email, name, role)
   values (v_id, v_email, v_name, v_role)
@@ -267,6 +332,57 @@ alter table public.orders       enable row level security;
 alter table public.order_items  enable row level security;
 alter table public.site_content enable row level security;
 alter table public.order_events enable row level security;
+alter table public.contact_requests enable row level security;
+alter table public.categories enable row level security;
+alter table public.faqs enable row level security;
+
+-- faqs: shoppers read published ones, admins read and manage all
+drop policy if exists "faqs_select" on public.faqs;
+create policy "faqs_select" on public.faqs
+  for select using (published or public.is_admin());
+
+drop policy if exists "faqs_insert" on public.faqs;
+create policy "faqs_insert" on public.faqs
+  for insert with check (public.is_admin());
+
+drop policy if exists "faqs_update" on public.faqs;
+create policy "faqs_update" on public.faqs
+  for update using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "faqs_delete" on public.faqs;
+create policy "faqs_delete" on public.faqs
+  for delete using (public.is_admin());
+
+-- categories: world-readable, admin-writable
+drop policy if exists "categories_select" on public.categories;
+create policy "categories_select" on public.categories
+  for select using (true);
+
+drop policy if exists "categories_insert" on public.categories;
+create policy "categories_insert" on public.categories
+  for insert with check (public.is_admin());
+
+drop policy if exists "categories_update" on public.categories;
+create policy "categories_update" on public.categories
+  for update using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "categories_delete" on public.categories;
+create policy "categories_delete" on public.categories
+  for delete using (public.is_admin());
+
+-- contact_requests: admins read and mark handled; visitors submit through
+-- public.submit_contact_request() only (no direct inserts)
+drop policy if exists "contact_select" on public.contact_requests;
+create policy "contact_select" on public.contact_requests
+  for select using (public.is_admin());
+
+drop policy if exists "contact_update" on public.contact_requests;
+create policy "contact_update" on public.contact_requests
+  for update using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "contact_delete" on public.contact_requests;
+create policy "contact_delete" on public.contact_requests
+  for delete using (public.is_admin());
 
 -- profiles: users read their own, admins read everyone (no client writes —
 -- rows are written only by public.sync_profile())
@@ -401,10 +517,11 @@ create policy "fankari_admin_delete" on storage.objects
   using (bucket_id = 'fankari' and public.is_admin());
 
 -- ============================================================================
--- 5. Atomic order placement (transactional: validate stock → order →
---    snapshot items → decrement stock → clear cart)
+-- 5. Atomic guest order placement (transactional: validate stock → order →
+--    snapshot items → decrement stock). The bag lives in the shopper's
+--    browser and is passed in as p_items: [{"productId": uuid, "quantity": n}].
 --    Errors raised as tokens understood by the API:
---      AUTH_REQUIRED / PAYMENT_METHOD / EMPTY_CART / STOCK:<product name>:<stock left>
+--      PAYMENT_METHOD / EMPTY_CART / STOCK:<product name>:<stock left>
 -- ============================================================================
 
 -- Shipping charge for an items total (after discount, incl. VAT), from the
@@ -426,11 +543,24 @@ as $$
   end;
 $$;
 
--- Earlier versions had no payment-method parameter; drop that signature so
--- the RPC stays unambiguous (create or replace would add an overload).
+-- Earlier versions read the signed-in user's cart_items; drop those
+-- signatures so the RPC stays unambiguous (create or replace would add an
+-- overload).
 drop function if exists public.place_order(text, text, text, text, text, text, text);
+drop function if exists public.place_order(text, text, text, text, text, text, text, text);
+
+-- Bag lines from p_items, one row per product (repeated products are summed)
+create or replace function public.order_lines(p_items jsonb)
+returns table (product_id uuid, quantity integer)
+language sql immutable
+as $$
+  select (e ->> 'productId')::uuid, sum((e ->> 'quantity')::integer)::integer
+  from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) e
+  group by 1;
+$$;
 
 create or replace function public.place_order(
+  p_items          jsonb,
   p_customer_name  text,
   p_email          text,
   p_phone          text default '',
@@ -445,7 +575,6 @@ language plpgsql security definer
 set search_path = public
 as $$
 declare
-  v_user         text := public.current_user_id();
   v_line         record;
   v_order_id     uuid;
   v_order_number text;
@@ -458,28 +587,34 @@ declare
   v_total        numeric(10, 2);
   v_count        integer := 0;
 begin
-  if v_user is null then
-    raise exception 'AUTH_REQUIRED';
-  end if;
-
   -- Payment methods offered at checkout — keep in step with PAYMENT_METHODS
   -- in src/lib/pricing.ts and orders_payment_method_check.
-  if p_payment_method is null or not (p_payment_method = any (array['COD'])) then
+  if p_payment_method is null or not (p_payment_method = any (array['WHATSAPP'])) then
     raise exception 'PAYMENT_METHOD';
   end if;
 
-  -- Lock product rows and validate every cart line
+  -- A bag line for a product that no longer exists
+  if exists (
+    select 1 from public.order_lines(p_items) l
+    where not exists (select 1 from public.products p where p.id = l.product_id)
+  ) then
+    raise exception 'STOCK:%:%', 'An item in your bag', 0;
+  end if;
+
+  -- Lock product rows and validate every bag line
   for v_line in
-    select ci.product_id, ci.quantity,
+    select l.product_id, l.quantity,
            p.name as p_name, p.price as p_price, p.image as p_image,
            p.stock as p_stock, p.active as p_active,
            p.discount_percent as p_discount, p.vat_rate as p_vat
-    from public.cart_items ci
-    join public.products p on p.id = ci.product_id
-    where ci.user_id = v_user
-    order by ci.created_at asc
+    from public.order_lines(p_items) l
+    join public.products p on p.id = l.product_id
+    order by p.id
     for update of p
   loop
+    if v_line.quantity < 1 then
+      raise exception 'EMPTY_CART';
+    end if;
     if not v_line.p_active or v_line.p_stock < v_line.quantity then
       raise exception 'STOCK:%:%', v_line.p_name, v_line.p_stock;
     end if;
@@ -513,7 +648,7 @@ begin
         user_id, order_number, status, subtotal, discount, vat, shipping, total,
         payment_method, customer_name, email, phone, address, city, postal_code, notes
       ) values (
-        v_user, v_order_number, 'CONFIRMED', v_subtotal, v_discount, v_vat, v_shipping, v_total,
+        null, v_order_number, 'CONFIRMED', v_subtotal, v_discount, v_vat, v_shipping, v_total,
         p_payment_method, p_customer_name, p_email, p_phone, p_address, p_city, p_postal_code, p_notes
       ) returning id into v_order_id;
       exit;
@@ -525,26 +660,24 @@ begin
   -- Snapshot line items
   insert into public.order_items
     (order_id, product_id, name, price, quantity, image, discount_percent, vat_rate)
-  select v_order_id, ci.product_id, p.name,
+  select v_order_id, l.product_id, p.name,
          round(p.price * (1 - p.discount_percent / 100) * (1 + p.vat_rate / 100), 2),
-         ci.quantity, p.image, p.discount_percent, p.vat_rate
-  from public.cart_items ci
-  join public.products p on p.id = ci.product_id
-  where ci.user_id = v_user;
+         l.quantity, p.image, p.discount_percent, p.vat_rate
+  from public.order_lines(p_items) l
+  join public.products p on p.id = l.product_id;
 
   -- Start the order timeline
   insert into public.order_events (order_id, status) values (v_order_id, 'CONFIRMED');
 
   -- Decrement stock
   update public.products p
-  set stock = p.stock - ci.quantity
-  from public.cart_items ci
-  where ci.product_id = p.id and ci.user_id = v_user;
+  set stock = p.stock - l.quantity
+  from public.order_lines(p_items) l
+  where l.product_id = p.id;
 
-  -- Clear the cart
-  delete from public.cart_items where user_id = v_user;
-
-  -- Return the full order DTO (camelCase, items included)
+  -- Return the full order DTO (camelCase, items and timeline included) — the
+  -- shopper has no account to read it back with, so the confirmation page
+  -- shows this response.
   return (
     select jsonb_build_object(
       'id', o.id, 'orderNumber', o.order_number, 'status', o.status,
@@ -553,6 +686,8 @@ begin
       'customerName', o.customer_name, 'email', o.email, 'phone', o.phone,
       'address', o.address, 'city', o.city, 'postalCode', o.postal_code,
       'notes', o.notes, 'createdAt', o.created_at,
+      'courierName', o.courier_name, 'trackingNumber', o.tracking_number,
+      'trackingUrl', o.tracking_url, 'estimatedDelivery', o.estimated_delivery,
       'items', (
         select coalesce(jsonb_agg(jsonb_build_object(
           'id', oi.id, 'productId', oi.product_id, 'name', oi.name,
@@ -561,6 +696,13 @@ begin
         ) order by oi.id), '[]'::jsonb)
         from public.order_items oi
         where oi.order_id = o.id
+      ),
+      'events', (
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'id', e.id, 'status', e.status, 'note', e.note, 'createdAt', e.created_at
+        ) order by e.created_at), '[]'::jsonb)
+        from public.order_events e
+        where e.order_id = o.id
       )
     )
     from public.orders o
@@ -689,53 +831,53 @@ create trigger on_order_created_send_emails
   for each row execute function public.notify_order_emails();
 
 -- ============================================================================
--- 6b. Public order tracking — anyone with the order number AND the email used
---     at checkout can see delivery progress. Returns only what a tracking
---     page needs (no street address or phone); null when nothing matches.
+-- 6b. Customers have no order tracking page — remove the public lookup that
+--     earlier versions of this script created.
 -- ============================================================================
 
-create or replace function public.track_order(p_order_number text, p_email text)
-returns jsonb
-language sql stable security definer
+drop function if exists public.track_order(text, text);
+
+-- ============================================================================
+-- 6c. Contact us — anyone may send a request; lengths are capped here too.
+-- ============================================================================
+
+create or replace function public.submit_contact_request(
+  p_name    text,
+  p_phone   text,
+  p_email   text,
+  p_message text
+)
+returns uuid
+language plpgsql security definer
 set search_path = public
 as $$
-  select jsonb_build_object(
-    'orderNumber', o.order_number,
-    'status', o.status,
-    'createdAt', o.created_at,
-    'total', o.total,
-    'paymentMethod', o.payment_method,
-    'city', o.city,
-    'courierName', o.courier_name,
-    'trackingNumber', o.tracking_number,
-    'trackingUrl', o.tracking_url,
-    'estimatedDelivery', o.estimated_delivery,
-    'items', (
-      select coalesce(jsonb_agg(jsonb_build_object(
-        'name', oi.name, 'quantity', oi.quantity, 'image', oi.image
-      ) order by oi.id), '[]'::jsonb)
-      from public.order_items oi where oi.order_id = o.id
-    ),
-    'events', (
-      select coalesce(jsonb_agg(jsonb_build_object(
-        'id', e.id, 'status', e.status, 'note', e.note, 'createdAt', e.created_at
-      ) order by e.created_at), '[]'::jsonb)
-      from public.order_events e where e.order_id = o.id
-    )
-  )
-  from public.orders o
-  where lower(o.order_number) = lower(trim(p_order_number))
-    and lower(o.email) = lower(trim(p_email))
-  limit 1;
+declare
+  v_id uuid;
+begin
+  if coalesce(trim(p_name), '') = '' or coalesce(trim(p_email), '') = ''
+     or coalesce(trim(p_message), '') = '' then
+    raise exception 'INVALID';
+  end if;
+  insert into public.contact_requests (name, phone, email, message)
+  values (left(trim(p_name), 120), left(trim(coalesce(p_phone, '')), 30),
+          left(trim(p_email), 200), left(trim(p_message), 4000))
+  returning id into v_id;
+  return v_id;
+end;
 $$;
 
-revoke execute on function public.track_order from public;
-grant  execute on function public.track_order to anon, authenticated;
+revoke execute on function public.submit_contact_request from public;
+grant  execute on function public.submit_contact_request to anon, authenticated;
 
--- Only signed-in users may call the RPCs (defense in depth — the functions
--- also verify current_user_id() / is_admin() internally)
-revoke execute on function public.place_order from anon, public;
-grant  execute on function public.place_order to authenticated;
+-- Guest checkout: anyone may place an order (no sign-in for shoppers)
+revoke execute on function public.place_order from public;
+grant  execute on function public.place_order to anon, authenticated;
+
+-- Internal helper of place_order (which runs as the owner)
+revoke execute on function public.order_lines from public, anon, authenticated;
+
+-- Only signed-in admins may call the remaining RPCs (defense in depth — the
+-- functions also verify current_user_id() / is_admin() internally)
 
 revoke execute on function public.admin_cancel_order from anon, public;
 grant  execute on function public.admin_cancel_order to authenticated;
@@ -796,6 +938,46 @@ insert into public.products (name, slug, description, price, stock, category, im
    'Hand-knotted cotton cord in a boho fringe silhouette that sways as you walk. Made for festival days, beach strolls, and everything golden-hour. Fully lined so nothing slips through.',
    54, 14, 'Special Edition', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p10.jpg', 'Braided cotton cord, cotton lining', '36 × 38 × 11 cm', false)
 on conflict (slug) do nothing;
+
+-- ============================================================================
+-- 8a. Seed categories (idempotent on name — never overwrites admin edits).
+--     Any category already used by a product but missing here is added too.
+-- ============================================================================
+
+insert into public.categories (name, image, sort_order) values
+  ('Canvas',          'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p1.jpg', 1),
+  ('Straw & Jute',    'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p3.jpg', 2),
+  ('Leather Trim',    'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p5.jpg', 3),
+  ('Linen',           'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p7.jpg', 4),
+  ('Special Edition', 'https://dnksdwswznijifzhnlvy.supabase.co/storage/v1/object/public/fankari/images/p8.jpg', 5)
+on conflict (name) do nothing;
+
+insert into public.categories (name, sort_order)
+select distinct p.category, 100
+from public.products p
+where p.category <> ''
+on conflict (name) do nothing;
+
+-- ============================================================================
+-- 8b. Starter FAQs — only when the table is empty, so admin edits and
+--     deletions are never undone by a re-run.
+-- ============================================================================
+
+insert into public.faqs (question, answer, sort_order)
+select q, a, n
+from (values
+  ('Do I need an account to order?',
+   'No. Add totes to your bag and check out with your name, address and WhatsApp number — no sign-up or login needed.', 1),
+  ('How do I pay for my order?',
+   'After you place your order, WhatsApp opens with your order details ready to send to us. We confirm the order there and share the payment details.', 2),
+  ('How much is shipping?',
+   'Shipping is calculated at checkout and shown before you order. Orders above our free-shipping amount ship free.', 3),
+  ('How do I care for my tote?',
+   'Each product page has care instructions for that bag. Most of our totes are best spot cleaned with a damp cloth and dried flat in the shade.', 4),
+  ('Can I ask about custom or bulk orders?',
+   'Yes — send us a message from the Contact us page with what you have in mind and we will get back to you.', 5)
+) as seed(q, a, n)
+where not exists (select 1 from public.faqs);
 
 -- ============================================================================
 -- Images live in the public Supabase Storage bucket `fankari` (images/…).

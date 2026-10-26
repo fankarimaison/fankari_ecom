@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { parseGallery, type MediaItem } from '@/lib/media'
 import {
   priceTotals,
   SHIPPING_CONTENT_DEFAULTS,
@@ -38,9 +39,14 @@ export interface ProductDTO {
   vatRate: number
   stock: number
   category: string
+  /** main image — cover in cards, the bag and order snapshots */
   image: string
+  /** extra photos and videos for the product page, in order */
+  gallery: MediaItem[]
   materials: string
   dimensions: string
+  /** one tip per line */
+  careInstructions: string
   featured: boolean
   active: boolean
   createdAt: string
@@ -120,20 +126,13 @@ export interface ProductRow {
   stock: number
   category: string
   image: string
+  gallery?: unknown
   materials: string | null
   dimensions: string | null
+  care_instructions?: string | null
   featured: boolean
   active: boolean
   created_at: string
-}
-
-export interface CartItemRow {
-  id: string
-  user_id: string
-  product_id: string
-  quantity: number
-  created_at: string
-  product: ProductRow | null
 }
 
 export interface OrderItemRow {
@@ -150,7 +149,8 @@ export interface OrderItemRow {
 
 export interface OrderRow {
   id: string
-  user_id: string
+  /** null for guest orders */
+  user_id: string | null
   order_number: string
   status: string
   subtotal: number | string
@@ -209,38 +209,14 @@ export function mapProduct(row: ProductRow): ProductDTO {
     stock: Number(row.stock),
     category: row.category,
     image: row.image,
+    // before schema.sql adds the column, or if a row was edited by hand
+    gallery: parseGallery(row.gallery ?? []) ?? [],
     materials: row.materials ?? '',
     dimensions: row.dimensions ?? '',
+    careInstructions: row.care_instructions ?? '',
     featured: row.featured,
     active: row.active,
     createdAt: row.created_at,
-  }
-}
-
-export function mapCartItem(row: CartItemRow): CartItemDTO {
-  return {
-    id: row.id,
-    productId: row.product_id,
-    quantity: Number(row.quantity),
-    product: row.product
-      ? mapProduct(row.product)
-      : ({
-          id: '',
-          name: '',
-          slug: '',
-          description: '',
-          price: 0,
-          discountPercent: 0,
-          vatRate: 0,
-          stock: 0,
-          category: '',
-          image: '',
-          materials: '',
-          dimensions: '',
-          featured: false,
-          active: false,
-          createdAt: '',
-        } satisfies ProductDTO),
   }
 }
 
@@ -303,7 +279,11 @@ export const ORDER_STATUSES = [
 export function mapAdminOrder(row: AdminOrderRow): AdminOrderDTO {
   return {
     ...mapOrder(row),
-    user: { name: row.user?.name ?? '', email: row.user?.email ?? '' },
+    // Guest orders have no profile — fall back to the checkout details
+    user: {
+      name: row.user?.name || row.customer_name,
+      email: row.user?.email || row.email,
+    },
   }
 }
 
@@ -327,30 +307,64 @@ export async function fetchShippingSettings(supabase: SupabaseClient): Promise<S
   return shippingFromContent(content)
 }
 
+/** One line of the shopper's bag (kept in their browser — no sign-in). */
+export interface BagLine {
+  productId: string
+  quantity: number
+}
+
 /**
- * Full refreshed cart for the user: rows (created_at asc) with the embedded
- * product, the order totals place_order() will charge (see priceTotals) and
- * count = Σ quantity.
+ * Parse a request's bag lines: valid uuids and positive integer quantities,
+ * repeated products summed. Returns null when the shape is wrong.
+ */
+export function parseBagLines(value: unknown): BagLine[] | null {
+  if (!Array.isArray(value)) return null
+  const merged = new Map<string, number>()
+  for (const line of value) {
+    const productId = (line as { productId?: unknown })?.productId
+    const quantity = (line as { quantity?: unknown })?.quantity
+    if (typeof productId !== 'string' || !UUID_RE.test(productId)) return null
+    if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1) return null
+    merged.set(productId, (merged.get(productId) ?? 0) + quantity)
+  }
+  return [...merged].map(([productId, quantity]) => ({ productId, quantity }))
+}
+
+/**
+ * Priced bag for the given lines, in the order given: each line with its
+ * product (unknown or retired products are dropped), the order totals
+ * place_order() will charge (see priceTotals) and count = Σ quantity.
+ * Line ids are the product ids.
  * Throws the raw PostgREST error so callers can apply the setup guard.
  */
-export async function fetchCartPayload(
+export async function buildCartPayload(
   supabase: SupabaseClient,
-  userId: string,
+  lines: BagLine[],
 ): Promise<CartPayload> {
-  const { data, error } = await supabase
-    .from('cart_items')
-    .select('*, product:products(*)')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true })
-  if (error) throw error
+  let products: ProductDTO[] = []
+  if (lines.length) {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .in('id', lines.map((l) => l.productId))
+    if (error) throw error
+    products = ((data ?? []) as ProductRow[]).map(mapProduct)
+  }
 
-  const rows = ((data ?? []) as CartItemRow[]).map(mapCartItem)
+  const byId = new Map(products.map((p) => [p.id, p]))
+  const items: CartItemDTO[] = []
+  for (const line of lines) {
+    const product = byId.get(line.productId)
+    if (!product || !product.active) continue
+    items.push({ id: product.id, productId: product.id, quantity: line.quantity, product })
+  }
+
   const totals = priceTotals(
-    rows.map((item) => ({ ...item.product, quantity: item.quantity })),
+    items.map((item) => ({ ...item.product, quantity: item.quantity })),
     await fetchShippingSettings(supabase),
   )
-  const count = rows.reduce((sum, item) => sum + item.quantity, 0)
-  return { items: rows, ...totals, count }
+  const count = items.reduce((sum, item) => sum + item.quantity, 0)
+  return { items, ...totals, count }
 }
 
 // ---------------------------------------------------------------------------

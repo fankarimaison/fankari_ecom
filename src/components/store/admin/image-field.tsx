@@ -26,7 +26,7 @@ export function ImageField({
   label: string;
   value: string;
   onChange: (url: string) => void;
-  folder: "products" | "site";
+  folder: "products" | "site" | "categories";
   placeholder?: string;
   required?: boolean;
 }) {

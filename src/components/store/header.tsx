@@ -1,7 +1,6 @@
 "use client";
 
-import { Menu, ShoppingBag, Sparkles, User as UserIcon } from "lucide-react";
-import { Show, SignInButton, UserButton } from "@clerk/nextjs";
+import { Menu, ShoppingBag, Sparkles } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { LOGO_URL } from "@/lib/storage";
 import { useCart, useContent, useGoToSection, useMe } from "./hooks";
@@ -18,7 +17,7 @@ import { useState } from "react";
 export function Header() {
   const { data: content } = useContent();
   const { data: user } = useMe();
-  const { data: cart } = useCart(!!user);
+  const { data: cart } = useCart();
   const navigate = useStore((s) => s.navigate);
   const setCartOpen = useStore((s) => s.setCartOpen);
   const goToSection = useGoToSection();
@@ -29,7 +28,6 @@ export function Header() {
   const count = cart?.count ?? 0;
 
   const goHomeShop = () => goToSection("shop");
-  const goAbout = () => goToSection("about");
 
   const navItems = (
     <>
@@ -42,25 +40,24 @@ export function Header() {
       </button>
       <button
         type="button"
-        onClick={goAbout}
+        onClick={() => navigate({ name: "about" })}
         className="rounded-md px-3 py-2.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground min-h-[44px]"
       >
-        About
+        About us
       </button>
       <button
         type="button"
-        onClick={() => navigate({ name: "track" })}
+        onClick={() => navigate({ name: "faq" })}
         className="rounded-md px-3 py-2.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground min-h-[44px]"
       >
-        Track order
+        FAQ
       </button>
       <button
         type="button"
-        onClick={() => navigate({ name: "account" })}
-        className="flex items-center gap-1.5 rounded-md px-3 py-2.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground min-h-[44px]"
+        onClick={() => navigate({ name: "contact" })}
+        className="rounded-md px-3 py-2.5 text-sm font-medium text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground min-h-[44px]"
       >
-        <UserIcon className="size-4" />
-        {user ? user.name.split(" ")[0] : "Account"}
+        Contact us
       </button>
       {user?.role === "ADMIN" && (
         <button
@@ -77,7 +74,7 @@ export function Header() {
   return (
     <div className="sticky top-0 z-40">
       {announcement && (
-        <div className="bg-primary px-4 py-2 text-center text-xs font-medium tracking-wide text-primary-foreground sm:text-[13px]">
+        <div className="bg-teal px-4 py-2 text-center text-xs font-medium tracking-wide text-white sm:text-[13px]">
           <span className="inline-flex items-center gap-1.5">
             <Sparkles className="size-3.5 shrink-0" aria-hidden />
             <span className="truncate">{announcement}</span>
@@ -114,18 +111,6 @@ export function Header() {
 
           {/* Actions */}
           <div className="flex items-center gap-1.5">
-            <Show when="signed-out">
-              <SignInButton mode="modal" withSignUp>
-                <Button variant="ghost" className="min-h-11 rounded-full px-4">
-                  Sign in
-                </Button>
-              </SignInButton>
-            </Show>
-            <Show when="signed-in">
-              <span className="flex size-11 items-center justify-center">
-                <UserButton />
-              </span>
-            </Show>
             <Button
               variant="ghost"
               size="icon"
@@ -134,7 +119,7 @@ export function Header() {
               aria-label={`Open bag (${count} item${count === 1 ? "" : "s"})`}
             >
               <ShoppingBag className="size-5" />
-              {user && count > 0 && (
+              {count > 0 && (
                 <span className="absolute -right-0.5 -top-0.5 flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
                   {count > 9 ? "9+" : count}
                 </span>

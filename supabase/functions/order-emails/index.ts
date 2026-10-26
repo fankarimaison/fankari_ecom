@@ -5,12 +5,11 @@
 //   1. an order confirmation to the customer
 //   2. a new-order alert to the shop (ADMIN_EMAIL)
 //
-// Secrets (supabase secrets set …):
-//   BREVO_API_KEY                Brevo → SMTP & API → API keys
+// Secrets (supabase secrets set â€¦):
+//   BREVO_API_KEY                Brevo â†’ SMTP & API â†’ API keys
 //   EMAIL_FROM                   sender verified in Brevo, e.g. orders@fankarimaison.com
 //   EMAIL_FROM_NAME              optional, default "Fankari Maison"
 //   ADMIN_EMAIL                  where new-order alerts go
-//   SITE_URL                     e.g. https://fankari-ecom.vercel.app (no trailing slash)
 //   ORDER_EMAIL_WEBHOOK_SECRET   same value as the Vault secret the trigger sends
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 //
@@ -46,7 +45,10 @@ interface Order {
   items: OrderItem[];
 }
 
-const PAYMENT_LABELS: Record<string, string> = { COD: "Cash on Delivery" };
+const PAYMENT_LABELS: Record<string, string> = {
+  WHATSAPP: "Arranged on WhatsApp",
+  COD: "Cash on Delivery",
+};
 
 const env = (name: string) => Deno.env.get(name) ?? "";
 
@@ -75,19 +77,19 @@ function itemsTable(order: Order): string {
   const rows = order.items
     .map(
       (i) => `<tr>
-        <td style="padding:6px 0">${esc(i.name)} × ${i.quantity}</td>
+        <td style="padding:6px 0">${esc(i.name)} Ã— ${i.quantity}</td>
         <td style="padding:6px 0;text-align:right">${money(Number(i.price) * i.quantity)}</td>
       </tr>`,
     )
     .join("");
   const line = (label: string, value: string, bold = false) =>
-    `<tr><td style="padding:3px 0;color:#6b5f55${bold ? ";font-weight:600;color:#2b2420" : ""}">${label}</td>
+    `<tr><td style="padding:3px 0;color:#5f6b6a${bold ? ";font-weight:600;color:#1f2a29" : ""}">${label}</td>
       <td style="padding:3px 0;text-align:right${bold ? ";font-weight:600" : ""}">${value}</td></tr>`;
   return `<table style="width:100%;border-collapse:collapse;font-size:14px">
     ${rows}
-    <tr><td colspan="2" style="border-top:1px solid #e7ddd2;padding-top:6px"></td></tr>
+    <tr><td colspan="2" style="border-top:1px solid #eddfd8;padding-top:6px"></td></tr>
     ${line("Subtotal (excl. VAT)", money(order.subtotal))}
-    ${Number(order.discount) > 0 ? line("Discount", `−${money(order.discount)}`) : ""}
+    ${Number(order.discount) > 0 ? line("Discount", `âˆ’${money(order.discount)}`) : ""}
     ${line("VAT", money(order.vat))}
     ${line("Shipping", Number(order.shipping) === 0 ? "Free" : money(order.shipping))}
     ${line("Payment", PAYMENT_LABELS[order.payment_method] ?? esc(order.payment_method))}
@@ -102,10 +104,10 @@ function address(order: Order): string {
 }
 
 function layout(title: string, body: string): string {
-  return `<!doctype html><html><body style="margin:0;background:#faf6f0;font-family:Georgia,'Times New Roman',serif;color:#2b2420">
+  return `<!doctype html><html><body style="margin:0;background:#fdf9f7;font-family:Georgia,'Times New Roman',serif;color:#1f2a29">
   <div style="max-width:560px;margin:0 auto;padding:24px">
-    <p style="font-size:22px;font-weight:600;color:#b93f1a;margin:0 0 16px">Fankari Maison</p>
-    <div style="background:#ffffff;border:1px solid #e7ddd2;border-radius:12px;padding:24px;font-family:Arial,Helvetica,sans-serif">
+    <p style="font-size:22px;font-weight:600;color:#cd2a00;margin:0 0 16px">Fankari Maison</p>
+    <div style="background:#ffffff;border:1px solid #eddfd8;border-radius:12px;padding:24px;font-family:Arial,Helvetica,sans-serif">
       <h1 style="font-size:20px;margin:0 0 12px">${title}</h1>
       ${body}
     </div>
@@ -113,35 +115,26 @@ function layout(title: string, body: string): string {
 }
 
 function customerEmail(order: Order): { subject: string; html: string } {
-  const site = env("SITE_URL");
-  const trackLink = site
-    ? `${site}/?track=${encodeURIComponent(order.order_number)}&email=${encodeURIComponent(order.email)}`
-    : "";
   return {
-    subject: `Your Fankari Maison order ${order.order_number} is confirmed`,
+    subject: `Your Fankari Maison order ${order.order_number}`,
     html: layout(
       `Thank you, ${esc(order.customer_name.split(" ")[0] || order.customer_name)}!`,
       `<p style="font-size:14px;line-height:1.6">We've received your order
-        <strong>${esc(order.order_number)}</strong>. You'll pay
-        <strong>${money(order.total)}</strong> in cash when it's delivered.</p>
+        <strong>${esc(order.order_number)}</strong> for
+        <strong>${money(order.total)}</strong>. We'll confirm it and share payment
+        details with you on WhatsApp.</p>
       ${itemsTable(order)}
       <p style="font-size:14px;margin:18px 0 4px;font-weight:600">Delivering to</p>
       <p style="font-size:14px;line-height:1.6;margin:0">${address(order)}</p>
-      ${
-        trackLink
-          ? `<p style="margin:22px 0 0"><a href="${esc(trackLink)}"
-              style="background:#b93f1a;color:#fff;text-decoration:none;padding:10px 18px;border-radius:999px;font-size:14px">Track your order</a></p>`
-          : ""
-      }
-      <p style="font-size:12px;color:#6b5f55;margin-top:22px">Keep your order number — you can
-        track delivery any time with it and this email address.</p>`,
+      <p style="font-size:12px;color:#5f6b6a;margin-top:22px">Keep your order number â€”
+        mention it when you message us on WhatsApp.</p>`,
     ),
   };
 }
 
 function adminEmail(order: Order): { subject: string; html: string } {
   return {
-    subject: `New order ${order.order_number} — ${money(order.total)}`,
+    subject: `New order ${order.order_number} â€” ${money(order.total)}`,
     html: layout(
       `New order ${esc(order.order_number)}`,
       `<p style="font-size:14px;line-height:1.6">${esc(order.customer_name)} (${esc(order.email)})
@@ -151,7 +144,7 @@ function adminEmail(order: Order): { subject: string; html: string } {
       <p style="font-size:14px;margin:18px 0 4px;font-weight:600">Ship to</p>
       <p style="font-size:14px;line-height:1.6;margin:0">${address(order)}</p>
       ${order.notes ? `<p style="font-size:14px;margin:12px 0 0"><strong>Notes:</strong> ${esc(order.notes)}</p>` : ""}
-      <p style="font-size:12px;color:#6b5f55;margin-top:22px">Manage it in the studio: Admin → Orders.</p>`,
+      <p style="font-size:12px;color:#5f6b6a;margin-top:22px">Manage it in the studio: Admin â†’ Orders.</p>`,
     ),
   };
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import type { MediaItem } from "@/lib/media";
+
 /**
  * Typed API client for the Fankari Maison storefront.
  * Written against docs/api-contract.md EXACTLY — all URLs are relative.
@@ -74,7 +76,10 @@ export const apiPatch = <T,>(path: string, body?: unknown) =>
 export const apiDelete = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
 /** Upload an image to Supabase Storage (admin only); resolves to its public URL. */
-export async function uploadImage(file: File, folder: "products" | "site"): Promise<string> {
+export async function uploadImage(
+  file: File,
+  folder: "products" | "site" | "categories"
+): Promise<string> {
   const body = new FormData();
   body.append("file", file);
   body.append("folder", folder);
@@ -82,7 +87,38 @@ export async function uploadImage(file: File, folder: "products" | "site"): Prom
   return data.url;
 }
 
+/**
+ * Upload a product gallery photo or video (admin only). The file goes straight
+ * from the browser to Supabase Storage through a signed URL, so large videos
+ * never pass through the app server.
+ */
+export async function uploadMedia(file: File): Promise<MediaItem> {
+  const { uploadUrl, url, type } = await request<{
+    uploadUrl: string;
+    url: string;
+    type: MediaItem["type"];
+  }>("/api/admin/upload-url", {
+    method: "POST",
+    body: JSON.stringify({ contentType: file.type, size: file.size }),
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": file.type, "cache-control": "max-age=31536000", "x-upsert": "false" },
+      body: file,
+    });
+  } catch {
+    throw new ApiError("Network error — please try again", 0);
+  }
+  if (!res.ok) throw new ApiError(`Upload failed (${res.status})`, res.status);
+  return { type, url };
+}
+
 /* ---------------------------------- DTOs ---------------------------------- */
+
+export type { MediaItem };
 
 export type Role = "CUSTOMER" | "ADMIN";
 
@@ -104,9 +140,14 @@ export interface Product {
   vatRate: number;
   stock: number;
   category: string;
+  /** main image — cover in cards, the bag and order snapshots */
   image: string;
+  /** extra photos and videos for the product page, in order */
+  gallery: MediaItem[];
   materials: string | null;
   dimensions: string | null;
+  /** one tip per line */
+  careInstructions: string;
   featured: boolean;
   active: boolean;
   createdAt: string;
@@ -185,20 +226,15 @@ export interface OrderEvent {
   createdAt: string;
 }
 
-/** Public tracking result (POST /api/track) — no address or phone. */
-export interface TrackedOrder {
-  orderNumber: string;
-  status: OrderStatus | string;
+/** A "Contact us" request (GET /api/admin/contact). */
+export interface ContactRequest {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  message: string;
+  handled: boolean;
   createdAt: string;
-  total: number;
-  paymentMethod: string;
-  city: string;
-  courierName: string;
-  trackingNumber: string;
-  trackingUrl: string;
-  estimatedDelivery: string | null;
-  items: { name: string; quantity: number; image: string }[];
-  events: OrderEvent[];
 }
 
 export interface AdminOrder extends Order {
@@ -235,10 +271,20 @@ export function productsUrl(params: ProductListParams = {}): string {
   return `/api/products${q ? `?${q}` : ""}`;
 }
 
-export const categories = [
-  "Canvas",
-  "Straw & Jute",
-  "Leather Trim",
-  "Linen",
-  "Special Edition",
-] as const;
+/** A FAQ entry (Admin → FAQ). */
+export interface Faq {
+  id: string;
+  question: string;
+  answer: string;
+  sortOrder: number;
+  published: boolean;
+}
+
+/** A product category (Admin → Categories). */
+export interface Category {
+  id: string;
+  name: string;
+  /** picture for the category tile; "" when none */
+  image: string;
+  sortOrder: number;
+}

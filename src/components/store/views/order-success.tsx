@@ -1,59 +1,42 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, PackageSearch } from "lucide-react";
-import { apiGet, type Order } from "../api";
-import { formatDate, formatPrice, statusBadgeClass, statusLabel } from "@/lib/format";
+import { CheckCircle2, MessageCircle, PackageSearch } from "lucide-react";
+import { type Order } from "../api";
+import { useContent } from "../hooks";
+import { whatsAppOrderUrl } from "../whatsapp-order";
+import { formatDate, formatPrice } from "@/lib/format";
 import { PriceSummary } from "../price-summary";
-import { OrderTracking } from "../order-tracking";
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
 
 export function OrderSuccessView({ orderId }: { orderId: string }) {
   const navigate = useStore((s) => s.navigate);
 
-  const { data: order, isLoading, isError } = useQuery({
+  // Shoppers have no account to read orders back with, so this is the order
+  // checkout just placed (updates happen on WhatsApp).
+  const { data: content } = useContent();
+  const { data: order } = useQuery<Order>({
     queryKey: ["order", orderId],
-    queryFn: async () => {
-      const data = await apiGet<{ order: Order }>(`/api/orders/${orderId}`);
-      return data.order;
-    },
-    // refetch so delivery updates from the studio show up
-    staleTime: 30_000,
+    queryFn: () => Promise.reject(new Error("Order not found")),
+    enabled: false,
   });
 
-  if (isLoading) {
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-16">
-        <Skeleton className="mx-auto size-16 rounded-full" />
-        <Skeleton className="mx-auto mt-4 h-8 w-72" />
-        <Skeleton className="mt-8 h-64 w-full rounded-xl" />
-      </div>
-    );
-  }
-
-  if (isError || !order) {
+  if (!order) {
     return (
       <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 px-4 py-24 text-center">
         <PackageSearch className="size-10 text-muted-foreground" aria-hidden />
         <div>
           <p className="font-display text-xl font-semibold">Order not found</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Sign in to view your orders, or head back to the shop.
+            For questions about an order, message us on WhatsApp with your
+            order number.
           </p>
         </div>
         <div className="flex gap-3">
-          <Button
-            variant="outline"
-            className="min-h-11 rounded-full"
-            onClick={() => navigate({ name: "account" })}
-          >
-            Sign in
-          </Button>
           <Button
             className="min-h-11 rounded-full"
             onClick={() => navigate({ name: "home" })}
@@ -75,9 +58,27 @@ export function OrderSuccessView({ orderId }: { orderId: string }) {
           Thank you, {order.customerName.split(" ")[0]}!
         </h1>
         <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
-          Your handcrafted totes are being prepared with care. We emailed a
-          receipt to <span className="font-medium text-foreground">{order.email}</span>.
+          One last step: send your order to us on WhatsApp. We&apos;ll confirm it
+          there and share payment details.
         </p>
+        <Button
+          asChild
+          size="lg"
+          className="mt-5 min-h-12 rounded-full bg-[#25D366] px-8 text-base text-white hover:bg-[#1ebe5b]"
+        >
+          <a
+            href={whatsAppOrderUrl(
+              order,
+              content?.whatsappNumber,
+              content?.brandName ?? "Fankari Maison"
+            )}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <MessageCircle className="size-5" aria-hidden />
+            Send order on WhatsApp
+          </a>
+        </Button>
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
           <Badge
             variant="outline"
@@ -85,25 +86,13 @@ export function OrderSuccessView({ orderId }: { orderId: string }) {
           >
             {order.orderNumber}
           </Badge>
-          <Badge className={statusBadgeClass(String(order.status))}>
-            {statusLabel(String(order.status))}
-          </Badge>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Keep your order number — you can track delivery any time from “Track order”.
+          Keep your order number — mention it when you message us on WhatsApp.
         </p>
       </div>
 
       <Card className="mt-8">
-        <CardHeader>
-          <CardTitle className="font-display text-lg">Delivery tracking</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <OrderTracking order={order} />
-        </CardContent>
-      </Card>
-
-      <Card className="mt-6">
         <CardHeader>
           <CardTitle className="font-display text-lg">Order summary</CardTitle>
           <p className="text-xs text-muted-foreground">
@@ -151,24 +140,6 @@ export function OrderSuccessView({ orderId }: { orderId: string }) {
       </Card>
 
       <div className="mt-8 flex flex-wrap justify-center gap-3">
-        <Button
-          size="lg"
-          variant="outline"
-          className="min-h-12 rounded-full px-7"
-          onClick={() =>
-            navigate({ name: "track", orderNumber: order.orderNumber, email: order.email })
-          }
-        >
-          Track this order
-        </Button>
-        <Button
-          size="lg"
-          variant="outline"
-          className="min-h-12 rounded-full px-7"
-          onClick={() => navigate({ name: "account" })}
-        >
-          View my orders
-        </Button>
         <Button
           size="lg"
           className="min-h-12 rounded-full px-7"

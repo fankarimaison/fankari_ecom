@@ -3,18 +3,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getSessionUser } from '@/lib/auth'
 import { STORAGE_BUCKET, storageUrl } from '@/lib/storage'
+import { IMAGE_TYPES as EXTENSIONS, MAX_IMAGE_BYTES as MAX_BYTES } from '@/lib/media'
 
-const MAX_BYTES = 5 * 1024 * 1024
-
-const EXTENSIONS: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/avif': 'avif',
-  'image/gif': 'gif',
-}
-
-const FOLDERS = new Set(['products', 'site'])
+const FOLDERS = new Set(['products', 'site', 'categories'])
 
 // POST /api/admin/upload — multipart { file, folder? } → { url }
 // Stores the image in the public `fankari` bucket under images/<folder>/.

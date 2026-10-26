@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useStore, viewKey, type View } from "@/lib/store";
+import { useBag } from "@/lib/cart";
+import { useStore, viewFromPathname, viewKey, type View } from "@/lib/store";
 import { Header } from "./header";
 import { Footer } from "./footer";
 import { CartDrawer } from "./cart-drawer";
@@ -11,27 +12,40 @@ import { ProductDetailView } from "./views/product-detail";
 import { CartView } from "./views/cart-view";
 import { CheckoutView } from "./views/checkout";
 import { OrderSuccessView } from "./views/order-success";
-import { AccountView } from "./views/account";
-import { TrackView } from "./views/track";
+import { ContactView } from "./views/contact";
+import { FaqView } from "./views/faq";
+import { AboutView } from "./views/about";
+import { CategoryView } from "./views/category";
 import { AdminView } from "./views/admin";
 
 /**
  * Root of the single-page storefront. Header, footer and bag drawer are
  * shared; the main region swaps views client-side with a soft fade.
  */
-export function StoreApp() {
-  const view = useStore((s) => s.view);
-  const navigate = useStore((s) => s.navigate);
+export function StoreApp({ initialPath }: { initialPath: string }) {
+  const storeView = useStore((s) => s.view);
+  const ready = useStore((s) => s.ready);
+  // Until the URL has been read in the browser, render the view for the
+  // requested path so the server HTML and first client render match.
+  const view = ready ? storeView : viewFromPathname(initialPath);
 
-  // Deep link from the order email: /?track=FM-XXXXXX&email=… opens tracking,
-  // then the query string is dropped so a refresh lands on the shop.
+  // Load the saved bag from this browser (see useBag).
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const orderNumber = params.get("track");
-    if (!orderNumber) return;
-    navigate({ name: "track", orderNumber, email: params.get("email") ?? "" });
-    window.history.replaceState(null, "", window.location.pathname);
-  }, [navigate]);
+    void useBag.persist.rehydrate();
+  }, []);
+
+  // Open the view in the address bar, and follow back/forward.
+  useEffect(() => {
+    const sync = () =>
+      useStore.setState({
+        view: viewFromPathname(window.location.pathname),
+        ready: true,
+        cartOpen: false,
+      });
+    sync();
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
 
   // New view → start from the top.
   useEffect(() => {
@@ -78,10 +92,14 @@ function ViewSwitch({ view }: { view: View }) {
       return <CheckoutView />;
     case "order-success":
       return <OrderSuccessView orderId={view.orderId} />;
-    case "account":
-      return <AccountView />;
-    case "track":
-      return <TrackView key={view.orderNumber ?? ""} orderNumber={view.orderNumber} email={view.email} />;
+    case "contact":
+      return <ContactView />;
+    case "faq":
+      return <FaqView />;
+    case "about":
+      return <AboutView />;
+    case "category":
+      return <CategoryView key={view.category} category={view.category} />;
     case "admin":
       return <AdminView tab={view.tab} />;
     default:

@@ -1,109 +1,50 @@
 "use client";
 
 import { useCallback } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useStore } from "@/lib/store";
+import { useBag } from "@/lib/cart";
 import { formatPrice } from "@/lib/format";
-import {
-  apiDelete,
-  apiPost,
-  apiPut,
-  ApiError,
-  type CartResponse,
-  type Product,
-} from "./api";
-import { useCart, useMe } from "./hooks";
+import { type Product } from "./api";
+import { useCart } from "./hooks";
 import { Button } from "@/components/ui/button";
 
-/** Shared cart mutation logic (drawer + cart view + product detail). */
+/**
+ * Shared bag actions (drawer + cart view + product detail). The bag lives in
+ * the browser, so these are instant; useCart re-prices it.
+ */
 export function useCartMutations() {
-  const queryClient = useQueryClient();
   const { toast } = useToast();
-  const navigate = useStore((s) => s.navigate);
+  const setQuantity = useBag((s) => s.setQuantity);
+  const remove = useBag((s) => s.remove);
 
-  const applyCart = useCallback(
-    (data: CartResponse) => {
-      queryClient.setQueryData(["cart"], data);
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
-    },
-    [queryClient]
-  );
-
-  /** 401 → friendly toast + account view (per spec). */
-  const onAuthError = useCallback(
-    (error: unknown) => {
-      if (error instanceof ApiError && error.status === 401) {
-        toast({
-          title: "Please sign in",
-          description: "You need an account to use your bag.",
-          variant: "destructive",
-        });
-        navigate({ name: "account" });
-      } else {
-        toast({
-          title: "Something went wrong",
-          description:
-            error instanceof Error ? error.message : "Please try again.",
-          variant: "destructive",
-        });
-      }
-    },
-    [toast, navigate]
-  );
-
-  const addItem = useMutation({
-    mutationFn: async ({
-      productId,
-      quantity = 1,
-    }: {
-      productId: string;
-      quantity?: number;
-    }) => apiPost<CartResponse>("/api/cart", { productId, quantity }),
-    onSuccess: applyCart,
-    onError: onAuthError,
-  });
-
-  const updateQty = useMutation({
-    mutationFn: async ({
-      itemId,
-      quantity,
-    }: {
-      itemId: string;
-      quantity: number;
-    }) => apiPut<CartResponse>(`/api/cart/${itemId}`, { quantity }),
-    onSuccess: applyCart,
-    onError: onAuthError,
-  });
-
-  const removeItem = useMutation({
-    mutationFn: async ({ itemId }: { itemId: string }) =>
-      apiDelete<CartResponse>(`/api/cart/${itemId}`),
-    onSuccess: applyCart,
-    onError: onAuthError,
-  });
-
-  /** Add then (optionally) run a follow-up, e.g. navigate to cart. */
+  /** Add then (optionally) run a follow-up, e.g. go to checkout. */
   const addToCart = useCallback(
-    async (product: Product, quantity = 1, onDone?: () => void) => {
-      try {
-        const data = await addItem.mutateAsync({ productId: product.id, quantity });
+    (product: Product, quantity = 1, onDone?: () => void) => {
+      const inBag =
+        useBag.getState().lines.find((l) => l.productId === product.id)?.quantity ?? 0;
+      if (inBag + quantity > product.stock) {
         toast({
-          title: "Added to your bag",
-          description: `${product.name} × ${quantity}`,
+          title: "Not enough stock",
+          description:
+            inBag > 0
+              ? `Only ${product.stock} left — you already have ${inBag} in your bag.`
+              : `Only ${product.stock} left in stock.`,
+          variant: "destructive",
         });
-        onDone?.();
-        return data;
-      } catch {
-        // error handling done in onError
-        return undefined;
+        return;
       }
+      useBag.getState().add(product.id, quantity);
+      toast({
+        title: "Added to your bag",
+        description: `${product.name} × ${quantity}`,
+      });
+      onDone?.();
     },
-    [addItem, toast]
+    [toast]
   );
 
-  return { addItem, updateQty, removeItem, addToCart };
+  return { addToCart, setQuantity, remove };
 }
 
 interface CartLineItemProps {
@@ -126,7 +67,7 @@ export function CartLineItem({
   maxQuantity,
   compact,
 }: CartLineItemProps) {
-  const { updateQty, removeItem } = useCartMutations();
+  const { setQuantity, remove } = useCartMutations();
 
   return (
     <div className="flex gap-3 py-3">
@@ -167,8 +108,8 @@ export function CartLineItem({
               variant="ghost"
               size="icon"
               className="size-9 rounded-full"
-              disabled={updateQty.isPending || quantity <= 1}
-              onClick={() => updateQty.mutate({ itemId, quantity: quantity - 1 })}
+              disabled={quantity <= 1}
+              onClick={() => setQuantity(itemId, quantity - 1)}
               aria-label={`Decrease ${name} quantity`}
             >
               <Minus className="size-3.5" />
@@ -181,10 +122,8 @@ export function CartLineItem({
               variant="ghost"
               size="icon"
               className="size-9 rounded-full"
-              disabled={
-                updateQty.isPending || quantity >= Math.max(1, maxQuantity)
-              }
-              onClick={() => updateQty.mutate({ itemId, quantity: quantity + 1 })}
+              disabled={quantity >= Math.max(1, maxQuantity)}
+              onClick={() => setQuantity(itemId, quantity + 1)}
               aria-label={`Increase ${name} quantity`}
             >
               <Plus className="size-3.5" />
@@ -195,8 +134,7 @@ export function CartLineItem({
             variant="ghost"
             size="icon"
             className="size-9 rounded-full text-muted-foreground hover:text-destructive"
-            disabled={removeItem.isPending}
-            onClick={() => removeItem.mutate({ itemId })}
+            onClick={() => remove(itemId)}
             aria-label={`Remove ${name} from bag`}
           >
             <Trash2 className="size-4" />
@@ -207,9 +145,8 @@ export function CartLineItem({
   );
 }
 
-/** Convenience: cart state + login flag for drawer/cart view. */
+/** Convenience: priced bag for drawer/cart view/checkout. */
 export function useCartState() {
-  const { data: user } = useMe();
-  const { data: cart, isLoading } = useCart(!!user);
-  return { user, cart, isLoading };
+  const { data: cart, isLoading } = useCart();
+  return { cart, isLoading };
 }

@@ -5,7 +5,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Megaphone } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { HERO_IMAGE_URL } from "@/lib/storage";
+import { heroSlides } from "@/lib/hero";
 import { ImageField } from "./image-field";
+import { HeroImagesField } from "./hero-images-field";
+import { TrustItemsField } from "./trust-items-field";
+import { parseTrustItems } from "@/lib/trust";
 import { apiPut, type SiteContent } from "../api";
 import { useContent } from "../hooks";
 import { PanelLoading } from "../views/admin";
@@ -27,10 +31,18 @@ const FIELDS: {
   label: string;
   multiline?: boolean;
   image?: boolean;
+  heroImages?: boolean;
+  trustItems?: boolean;
   placeholder?: string;
   hint?: string;
 }[] = [
   { key: "brandName", label: "Brand name", hint: "Shown in the header and footer." },
+  {
+    key: "whatsappNumber",
+    label: "Orders WhatsApp number",
+    placeholder: "919876543210",
+    hint: "With country code. After checkout, buyers send their order details to this number on WhatsApp.",
+  },
   {
     key: "announcement",
     label: "Announcement bar",
@@ -39,14 +51,35 @@ const FIELDS: {
   },
   { key: "heroTitle", label: "Hero title" },
   { key: "heroSubtitle", label: "Hero subtitle", multiline: true },
+  // Banner images are edited with HeroImagesField (below the hero copy)
+  { key: "heroImages", label: "Banner images", heroImages: true },
+  // Edited with TrustItemsField
+  { key: "trustItems", label: "Highlights", trustItems: true },
   {
-    key: "heroImage",
-    label: "Hero image",
-    image: true,
-    placeholder: HERO_IMAGE_URL,
+    key: "footerText",
+    label: "Footer description",
+    multiline: true,
+    hint: "Short text under the logo in the footer.",
   },
-  { key: "aboutTitle", label: "About title" },
-  { key: "aboutText", label: "About text", multiline: true },
+  {
+    key: "contactEmail",
+    label: "Get in touch — email",
+    placeholder: "hello@fankarimaison.com",
+    hint: "Leave any “Get in touch” field empty to hide it from the footer.",
+  },
+  { key: "contactPhone", label: "Get in touch — phone", placeholder: "+91 98765 43210" },
+  {
+    key: "contactAddress",
+    label: "Get in touch — address",
+    multiline: true,
+    placeholder: "Studio address",
+  },
+  {
+    key: "defaultCareInstructions",
+    label: "Default care instructions",
+    multiline: true,
+    hint: "One tip per line. Shown on every product page that has no care instructions of its own (Products → edit a product to set its own).",
+  },
 ];
 
 export function AdminContent() {
@@ -79,7 +112,7 @@ function ContentForm({ initial }: { initial: SiteContent }) {
       void queryClient.invalidateQueries({ queryKey: ["content"] });
       toast({
         title: "Content saved",
-        description: "The header, hero and about sections update live.",
+        description: "The header, hero and footer update live.",
       });
     },
     onError: (error) => {
@@ -104,8 +137,21 @@ function ContentForm({ initial }: { initial: SiteContent }) {
       </CardHeader>
       <CardContent>
         <div className="grid gap-4">
-          {FIELDS.map(({ key, label, multiline, image, placeholder, hint }) =>
-            image ? (
+          {FIELDS.map(({ key, label, multiline, image, heroImages, trustItems, placeholder, hint }) =>
+            trustItems ? (
+              <TrustItemsField
+                key={key}
+                // unfiltered, so a just-added row with no text yet stays visible
+                value={parseTrustItems(form.trustItems) ?? []}
+                onChange={(items) => setForm((f) => ({ ...f, trustItems: JSON.stringify(items) }))}
+              />
+            ) : heroImages ? (
+              <HeroImagesField
+                key={key}
+                value={heroSlides(form, HERO_IMAGE_URL)}
+                onChange={(urls) => setForm((f) => ({ ...f, heroImages: JSON.stringify(urls) }))}
+              />
+            ) : image ? (
               <ImageField
                 key={key}
                 id={`content-${key}`}
@@ -121,7 +167,7 @@ function ContentForm({ initial }: { initial: SiteContent }) {
                 {multiline ? (
                   <Textarea
                     id={`content-${key}`}
-                    rows={key === "aboutText" ? 5 : 2}
+                    rows={key === "defaultCareInstructions" ? 5 : 2}
                     className="mt-1.5"
                     placeholder={placeholder}
                     value={form[key] ?? ""}

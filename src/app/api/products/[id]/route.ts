@@ -8,6 +8,9 @@ import {
   type ProductRow,
 } from '@/lib/dto'
 import { isPercent } from '@/lib/pricing'
+import { MAX_GALLERY_ITEMS, parseGallery } from '@/lib/media'
+
+const MAX_CARE_LENGTH = 2000
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -117,6 +120,16 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
       }
       data.image = body.image.trim()
     }
+    if (body.gallery !== undefined) {
+      const gallery = parseGallery(body.gallery)
+      if (!gallery) {
+        return NextResponse.json(
+          { error: `Gallery must be up to ${MAX_GALLERY_ITEMS} photos or videos with web links` },
+          { status: 400 }
+        )
+      }
+      data.gallery = gallery
+    }
     if (body.price !== undefined) {
       if (typeof body.price !== 'number' || !Number.isFinite(body.price) || body.price < 0) {
         return NextResponse.json({ error: 'A valid price is required' }, { status: 400 })
@@ -152,6 +165,17 @@ export async function PUT(req: NextRequest, { params }: RouteContext) {
         typeof body.dimensions === 'string' && body.dimensions.trim()
           ? body.dimensions.trim()
           : ''
+    }
+    if (body.careInstructions !== undefined) {
+      const care =
+        typeof body.careInstructions === 'string' ? body.careInstructions.trim() : ''
+      if (care.length > MAX_CARE_LENGTH) {
+        return NextResponse.json(
+          { error: `Care instructions must be ${MAX_CARE_LENGTH} characters or fewer` },
+          { status: 400 }
+        )
+      }
+      data.care_instructions = care
     }
     if (body.featured !== undefined) {
       data.featured = body.featured === true

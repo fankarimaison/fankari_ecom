@@ -11,16 +11,22 @@
 
 /**
  * Payment methods offered at checkout. To add one, append it here and add its
- * id to PAYMENT_METHOD_IDS in place_order() and orders_payment_method_check in
+ * id to the array in place_order() and orders_payment_method_check in
  * supabase/schema.sql.
+ *
+ * WHATSAPP: the buyer sends the order to the seller on WhatsApp and they
+ * settle payment there (see src/lib/whatsapp.ts).
  */
 export const PAYMENT_METHODS = [
   {
-    id: 'COD',
-    label: 'Cash on Delivery',
-    description: 'Pay in cash when your order is delivered.',
+    id: 'WHATSAPP',
+    label: 'Arranged on WhatsApp',
+    description: 'Send your order to us on WhatsApp — we confirm it and share payment details there.',
   },
 ] as const
+
+/** Labels for methods no longer offered but present on older orders. */
+const LEGACY_PAYMENT_LABELS: Record<string, string> = { COD: 'Cash on Delivery' }
 
 export type PaymentMethodId = (typeof PAYMENT_METHODS)[number]['id']
 
@@ -29,7 +35,7 @@ export function isPaymentMethod(value: unknown): value is PaymentMethodId {
 }
 
 export function paymentMethodLabel(id: string): string {
-  return PAYMENT_METHODS.find((m) => m.id === id)?.label ?? id
+  return PAYMENT_METHODS.find((m) => m.id === id)?.label ?? LEGACY_PAYMENT_LABELS[id] ?? id
 }
 
 /**

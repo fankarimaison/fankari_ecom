@@ -6,7 +6,8 @@ import { formatPrice } from "@/lib/format";
 import { isPercent, listPrice, unitPrice } from "@/lib/pricing";
 import { DEFAULT_PRODUCT_IMAGE_URL } from "@/lib/storage";
 import { ImageField } from "./image-field";
-import { categories } from "../api";
+import { GalleryField } from "./gallery-field";
+import { useCategories } from "../hooks";
 import type { Product } from "../api";
 import {
   useAdminProductMutations,
@@ -262,10 +263,12 @@ function ProductDialog({
     discountPercent: product?.discountPercent ?? 0,
     vatRate: product?.vatRate ?? 0,
     stock: product?.stock ?? 0,
-    category: product?.category ?? "Canvas",
+    category: product?.category ?? "",
     image: product?.image ?? DEFAULT_PRODUCT_IMAGE_URL,
+    gallery: product?.gallery ?? [],
     materials: product?.materials ?? "",
     dimensions: product?.dimensions ?? "",
+    careInstructions: product?.careInstructions ?? "",
     featured: product?.featured ?? false,
     active: product?.active ?? true,
   }));
@@ -276,7 +279,7 @@ function ProductDialog({
   const pending = create.isPending || update.isPending;
 
   const submit = () => {
-    if (!form.name.trim() || !form.description.trim() || !form.image.trim()) return;
+    if (!form.name.trim() || !form.description.trim() || !form.image.trim() || !form.category) return;
     if (isEdit && product) {
       update.mutate(
         { id: product.id, ...form },
@@ -287,8 +290,13 @@ function ProductDialog({
     }
   };
 
+  const { data: categoryList } = useCategories();
+  // Keep a product's current category selectable even if it was removed
+  const categoryNames = (categoryList ?? []).map((c) => c.name);
+  if (form.category && !categoryNames.includes(form.category)) categoryNames.push(form.category);
+
   const invalid =
-    !form.name.trim() || !form.description.trim() || !form.image.trim() ||
+    !form.name.trim() || !form.description.trim() || !form.image.trim() || !form.category ||
     Number.isNaN(form.price) || form.price < 0 ||
     Number.isNaN(form.stock) || form.stock < 0 ||
     !isPercent(form.discountPercent) || !isPercent(form.vatRate);
@@ -395,10 +403,10 @@ function ProductDialog({
             <Label htmlFor="p-category">Category</Label>
             <Select value={form.category} onValueChange={(v) => set("category", v)}>
               <SelectTrigger id="p-category" className="mt-1.5 min-h-10 w-full">
-                <SelectValue />
+                <SelectValue placeholder="Choose a category" />
               </SelectTrigger>
               <SelectContent>
-                {categories.map((c) => (
+                {categoryNames.map((c) => (
                   <SelectItem key={c} value={c}>
                     {c}
                   </SelectItem>
@@ -408,13 +416,14 @@ function ProductDialog({
           </div>
           <ImageField
             id="p-image"
-            label="Product image"
+            label="Main image"
             folder="products"
             placeholder={`${DEFAULT_PRODUCT_IMAGE_URL} or any image URL`}
             value={form.image}
             onChange={(url) => set("image", url)}
             required
           />
+          <GalleryField value={form.gallery} onChange={(items) => set("gallery", items)} />
           <div>
             <Label htmlFor="p-materials">Materials</Label>
             <Input
@@ -434,6 +443,22 @@ function ProductDialog({
               value={form.dimensions ?? ""}
               onChange={(e) => set("dimensions", e.target.value)}
             />
+          </div>
+          <div>
+            <Label htmlFor="p-care">Care instructions</Label>
+            <Textarea
+              id="p-care"
+              rows={4}
+              maxLength={2000}
+              className="mt-1.5"
+              placeholder={"Spot clean with a damp cloth\nDo not machine wash\nDry flat in the shade"}
+              value={form.careInstructions ?? ""}
+              onChange={(e) => set("careInstructions", e.target.value)}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              One tip per line — each line shows as a bullet on the product page. Leave empty
+              to use the default care instructions from Content.
+            </p>
           </div>
           <div className="flex items-center justify-between rounded-lg border border-border/70 px-3 py-2.5">
             <Label htmlFor="p-featured" className="cursor-pointer">

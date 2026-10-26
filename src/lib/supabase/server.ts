@@ -1,20 +1,30 @@
-import { auth } from '@clerk/nextjs/server'
-import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { cookies } from 'next/headers'
+import { createServerClient } from '@supabase/ssr'
 
 /**
  * Server-side Supabase client for route handlers, server components and
- * server actions. Every query carries the signed-in user's Clerk session
- * token (Supabase third-party auth), so RLS sees the Clerk user id as
- * auth.jwt()->>'sub'. Signed-out requests run as anon.
+ * server actions. Supabase Auth keeps the admin's session in cookies, so RLS
+ * sees the signed-in user as auth.jwt(); shoppers (signed out) run as anon.
  */
 export async function createClient() {
-  const { getToken } = await auth()
+  const cookieStore = await cookies()
 
-  return createSupabaseClient(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
-      accessToken: async () => (await getToken()) ?? null,
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (cookiesToSet) => {
+          try {
+            for (const { name, value, options } of cookiesToSet) {
+              cookieStore.set(name, value, options)
+            }
+          } catch {
+            // Called from a server component — proxy.ts refreshes the session
+          }
+        },
+      },
     },
   )
 }

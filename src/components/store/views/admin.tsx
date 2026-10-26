@@ -2,13 +2,18 @@
 
 import { Lock, Loader2 } from "lucide-react";
 import { useStore, type View } from "@/lib/store";
+import { AdminLoginForm, AdminSignOutButton } from "../admin/login-form";
 import { useAdminStats } from "../admin/use-admin";
 import { useMe } from "../hooks";
 import { AdminDashboard } from "../admin/dashboard";
 import { AdminProducts } from "../admin/products-panel";
+import { AdminCategories } from "../admin/categories-panel";
 import { AdminInventory } from "../admin/inventory-panel";
 import { AdminOrders } from "../admin/orders-panel";
+import { AdminMessages } from "../admin/messages-panel";
+import { AdminFaq } from "../admin/faq-panel";
 import { AdminContent } from "../admin/content-panel";
+import { AdminAbout } from "../admin/about-panel";
 import { AdminShipping } from "../admin/shipping-panel";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,8 +24,12 @@ type AdminTab = NonNullable<Extract<View, { name: "admin" }>["tab"]>;
 const TABS: { key: AdminTab; label: string }[] = [
   { key: "dashboard", label: "Dashboard" },
   { key: "products", label: "Products" },
+  { key: "categories", label: "Categories" },
   { key: "inventory", label: "Inventory" },
   { key: "orders", label: "Orders" },
+  { key: "messages", label: "Messages" },
+  { key: "faq", label: "FAQ" },
+  { key: "about", label: "About page" },
   { key: "shipping", label: "Shipping" },
   { key: "content", label: "Content" },
 ];
@@ -44,7 +53,10 @@ export function AdminView({ tab }: { tab?: AdminTab }) {
     );
   }
 
-  if (!user || user.role !== "ADMIN") {
+  // Only the studio team signs in (shoppers check out as guests)
+  if (!user) return <AdminLoginForm />;
+
+  if (user.role !== "ADMIN") {
     return (
       <div className="mx-auto flex max-w-7xl flex-col items-center gap-4 px-4 py-24 text-center">
         <span className="flex size-16 items-center justify-center rounded-full bg-muted">
@@ -57,13 +69,7 @@ export function AdminView({ tab }: { tab?: AdminTab }) {
             account that has the admin role.
           </p>
         </div>
-        <Button
-          size="lg"
-          className="mt-2 min-h-11 rounded-full px-8"
-          onClick={() => navigate({ name: "account" })}
-        >
-          Sign in
-        </Button>
+        <AdminSignOutButton />
       </div>
     );
   }
@@ -80,6 +86,7 @@ export function AdminView({ tab }: { tab?: AdminTab }) {
             Manage products, inventory, orders and storefront content.
           </p>
         </div>
+        <AdminSignOutButton />
       </div>
 
       {/* Tab nav */}
@@ -108,8 +115,12 @@ export function AdminView({ tab }: { tab?: AdminTab }) {
       <div className="mt-6">
         {active === "dashboard" && <AdminDashboard onNavigate={navigate} />}
         {active === "products" && <AdminProducts />}
+        {active === "categories" && <AdminCategories />}
         {active === "inventory" && <AdminInventory />}
         {active === "orders" && <AdminOrders />}
+        {active === "messages" && <AdminMessages />}
+        {active === "faq" && <AdminFaq />}
+        {active === "about" && <AdminAbout />}
         {active === "shipping" && <AdminShipping />}
         {active === "content" && <AdminContent />}
       </div>

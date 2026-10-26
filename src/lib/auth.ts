@@ -1,4 +1,3 @@
-import { auth } from '@clerk/nextjs/server'
 import { createClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -10,10 +9,11 @@ export interface SessionUser {
 }
 
 /**
- * Read the signed-in user from the Clerk session. Returns null when signed
- * out. The profile row is created/refreshed from the session token claims by
- * the sync_profile() RPC (role is ADMIN when the user's Clerk public metadata
- * has {"role":"admin"}).
+ * Read the signed-in user from the Supabase Auth session (only the studio
+ * admin ever signs in). Returns null when signed out. The profile row is
+ * created/refreshed from the session token by the sync_profile() RPC (role is
+ * ADMIN when the user's app_metadata has {"role":"admin"} — set from the
+ * Supabase dashboard / SQL, never by the user).
  *
  * Accepts an optional existing server client to avoid creating a second one:
  *   const supabase = await createClient()
@@ -23,10 +23,13 @@ export async function getSessionUser(
   client?: SupabaseClient,
 ): Promise<SessionUser | null> {
   try {
-    const { userId } = await auth()
-    if (!userId) return null
-
     const supabase = client ?? (await createClient())
+    // getUser() verifies the token with Supabase Auth (getSession() would not)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return null
+
     const { data: profile, error } = await supabase.rpc('sync_profile')
     if (error || !profile) {
       if (error) console.error('sync_profile failed:', error.message)
@@ -34,7 +37,7 @@ export async function getSessionUser(
     }
 
     return {
-      id: userId,
+      id: user.id,
       email: profile.email ?? '',
       name: profile.name ?? '',
       role: profile.role === 'ADMIN' ? 'ADMIN' : 'CUSTOMER',

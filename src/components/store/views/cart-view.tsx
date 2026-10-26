@@ -13,35 +13,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function CartView() {
   const navigate = useStore((s) => s.navigate);
-  const { user, cart, isLoading } = useCartState();
+  const { cart, isLoading } = useCartState();
   const shipping = useShipping();
 
   const items = cart?.items ?? [];
   // null when the free-shipping waiver is switched off in Admin
   const toFree = cart ? amountToFreeShipping(cart.itemsTotal, shipping) : null;
-
-  if (!user) {
-    return (
-      <div className="mx-auto flex max-w-7xl flex-col items-center gap-4 px-4 py-24 text-center">
-        <span className="flex size-14 items-center justify-center rounded-full bg-muted">
-          <ShoppingBag className="size-6 text-muted-foreground" aria-hidden />
-        </span>
-        <div>
-          <p className="font-display text-xl font-semibold">Sign in to see your bag</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Your bag is saved to your account so you can pick up where you left off.
-          </p>
-        </div>
-        <Button
-          size="lg"
-          className="min-h-11 rounded-full px-8"
-          onClick={() => navigate({ name: "account" })}
-        >
-          Sign in
-        </Button>
-      </div>
-    );
-  }
 
   if (isLoading) {
     return (

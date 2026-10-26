@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useBag } from "@/lib/cart";
 import { useStore } from "@/lib/store";
 import { formatPrice } from "@/lib/format";
 import { shippingFromContent, type ShippingSettings } from "@/lib/pricing";
-import { apiGet, type CartResponse, type SiteContent, type User } from "./api";
+import {
+  apiGet,
+  apiPost,
+  type CartResponse,
+  type Category,
+  type Faq,
+  type SiteContent,
+  type User,
+} from "./api";
 
-/** Current session user — null when signed out. */
+/** Signed-in studio admin, if any — null for shoppers (who never sign in). */
 export function useMe() {
   return useQuery({
     queryKey: ["me"],
@@ -37,6 +46,44 @@ export function useContent() {
   });
 }
 
+/** FAQs in display order (hidden ones are included only for a signed-in admin). */
+export function useFaqs() {
+  return useQuery({
+    queryKey: ["faqs"],
+    queryFn: async () => {
+      const data = await apiGet<{ faqs: Faq[] }>("/api/faqs");
+      return data.faqs;
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** Built-in categories — used when /api/categories can't be reached. */
+const FALLBACK_CATEGORIES: Category[] = [
+  "Canvas",
+  "Straw & Jute",
+  "Leather Trim",
+  "Linen",
+  "Special Edition",
+].map((name, i) => ({ id: name, name, image: "", sortOrder: i + 1 }));
+
+/** Product categories in display order (Admin → Categories). */
+export function useCategories() {
+  return useQuery({
+    queryKey: ["categories"],
+    queryFn: async () => {
+      try {
+        const data = await apiGet<{ categories: Category[] }>("/api/categories");
+        return data.categories.length ? data.categories : FALLBACK_CATEGORIES;
+      } catch {
+        // Never leave the shop without categories
+        return FALLBACK_CATEGORIES;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
 /** Shipping settings from Admin → Content (defaults until content loads). */
 export function useShipping(): ShippingSettings {
   const { data: content } = useContent();
@@ -58,15 +105,28 @@ export function shippingPolicyText(s: ShippingSettings, short = false): string {
     : `Free shipping on orders over ${formatPrice(s.freeShippingThreshold)} — otherwise ${formatPrice(s.fee)} flat.`;
 }
 
-/** Logged-in user's cart. Disabled while signed out (API would 401). */
-export function useCart(enabled: boolean) {
+const EMPTY_CART: CartResponse = {
+  items: [],
+  subtotal: 0,
+  discount: 0,
+  vat: 0,
+  itemsTotal: 0,
+  shipping: 0,
+  total: 0,
+  count: 0,
+};
+
+/** The shopper's bag (kept in the browser), priced by the API. */
+export function useCart() {
+  const lines = useBag((s) => s.lines);
   return useQuery({
-    queryKey: ["cart"],
-    queryFn: async () => {
-      const data = await apiGet<CartResponse>("/api/cart");
-      return data;
-    },
-    enabled,
+    queryKey: ["cart", lines],
+    queryFn: () =>
+      lines.length
+        ? apiPost<CartResponse>("/api/cart", { items: lines })
+        : Promise.resolve(EMPTY_CART),
+    // keep showing the last totals while a quantity change is re-priced
+    placeholderData: keepPreviousData,
   });
 }
 

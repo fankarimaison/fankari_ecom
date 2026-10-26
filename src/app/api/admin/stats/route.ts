@@ -15,13 +15,12 @@ export async function GET() {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
-    const [ordersRes, profilesRes, productsRes] = await Promise.all([
-      supabase.from('orders').select('total,status'),
-      supabase.from('profiles').select('role'),
+    const [ordersRes, productsRes] = await Promise.all([
+      supabase.from('orders').select('total,status,email'),
       supabase.from('products').select('stock,active'),
     ])
 
-    for (const res of [ordersRes, profilesRes, productsRes]) {
+    for (const res of [ordersRes, productsRes]) {
       if (res.error) {
         if (isSchemaMissing(res.error)) return setupRequiredResponse()
         console.error('GET /api/admin/stats query error:', res.error.message)
@@ -29,8 +28,11 @@ export async function GET() {
       }
     }
 
-    const orders = (ordersRes.data ?? []) as { total: number | string; status: string }[]
-    const profiles = (profilesRes.data ?? []) as { role: string }[]
+    const orders = (ordersRes.data ?? []) as {
+      total: number | string
+      status: string
+      email: string
+    }[]
     const products = (productsRes.data ?? []) as { stock: number | string; active: boolean }[]
 
     const stats = {
@@ -41,7 +43,8 @@ export async function GET() {
             .reduce((sum, o) => sum + Number(o.total), 0) * 100
         ) / 100,
       orders: orders.length,
-      customers: profiles.filter((p) => p.role === 'CUSTOMER').length,
+      // Shoppers check out as guests — count distinct checkout emails
+      customers: new Set(orders.map((o) => o.email.trim().toLowerCase()).filter(Boolean)).size,
       products: products.length,
       lowStock: products.filter((p) => p.active && Number(p.stock) <= 5).length,
       pending: orders.filter((o) => o.status === 'PENDING' || o.status === 'CONFIRMED').length,

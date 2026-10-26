@@ -22,7 +22,7 @@ export function CartDrawer() {
   const cartOpen = useStore((s) => s.cartOpen);
   const setCartOpen = useStore((s) => s.setCartOpen);
   const navigate = useStore((s) => s.navigate);
-  const { user, cart, isLoading } = useCartState();
+  const { cart, isLoading } = useCartState();
 
   const items = cart?.items ?? [];
   // After discount, incl. VAT — what free shipping is measured against
@@ -34,10 +34,6 @@ export function CartDrawer() {
 
   const goCheckout = () => {
     setCartOpen(false);
-    if (!user) {
-      navigate({ name: "account" });
-      return;
-    }
     navigate({ name: "checkout" });
   };
 
@@ -53,29 +49,7 @@ export function CartDrawer() {
           </SheetDescription>
         </SheetHeader>
 
-        {!user ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-            <span className="flex size-14 items-center justify-center rounded-full bg-muted">
-              <ShoppingBag className="size-6 text-muted-foreground" aria-hidden />
-            </span>
-            <div>
-              <p className="font-medium">Sign in to see your bag</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Your bag is saved to your account.
-              </p>
-            </div>
-            <Button
-              size="lg"
-              className="min-h-11 rounded-full px-8"
-              onClick={() => {
-                setCartOpen(false);
-                navigate({ name: "account" });
-              }}
-            >
-              Sign in
-            </Button>
-          </div>
-        ) : isLoading ? (
+        {isLoading ? (
           <div className="flex-1 space-y-4 p-5">
             {[0, 1].map((i) => (
               <div key={i} className="flex gap-3">
@@ -161,7 +135,7 @@ export function CartDrawer() {
                 <span className="font-semibold">{formatPrice(itemsTotal)}</span>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Shipping calculated at checkout. Payment: Cash on Delivery.
+                Shipping calculated at checkout. Orders are confirmed on WhatsApp.
               </p>
               <Button
                 size="lg"

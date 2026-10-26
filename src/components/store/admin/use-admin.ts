@@ -13,6 +13,7 @@ import {
   ApiError,
   type AdminOrder,
   type AdminStats,
+  type MediaItem,
   type Product,
 } from "../api";
 
@@ -74,8 +75,10 @@ export interface AdminProductInput {
   stock: number;
   category: string;
   image: string;
+  gallery: MediaItem[];
   materials?: string;
   dimensions?: string;
+  careInstructions?: string;
   featured?: boolean;
   active?: boolean;
 }
@@ -162,8 +165,6 @@ export function useAdminOrderStatusMutation() {
     onSuccess: (order, patch) => {
       void queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
       void queryClient.invalidateQueries({ queryKey: ["admin-stats"] });
-      void queryClient.invalidateQueries({ queryKey: ["orders"] });
-      void queryClient.invalidateQueries({ queryKey: ["track"] });
       toast({
         title:
           patch.status !== undefined && Object.keys(patch).length === 1

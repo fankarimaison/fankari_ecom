@@ -192,8 +192,8 @@ export function ShipDialog({
             Mark {order?.orderNumber} as {statusLabel(status).toLowerCase()}
           </DialogTitle>
           <DialogDescription>
-            Add the courier’s tracking details — the customer sees them on their order and the
-            Track order page.
+            Add the courier’s tracking details for your records — share them with the
+            customer on WhatsApp.
           </DialogDescription>
         </DialogHeader>
         {order && v && (
@@ -233,8 +233,8 @@ export function ShipDialog({
 }
 
 /**
- * Delivery status + courier details for one order. Saving a status change or
- * a note adds an entry to the timeline customers see on "Track order".
+ * Delivery status + courier details for one order (studio use only). Saving a
+ * status change or a note adds an entry to the order's timeline.
  */
 export function DeliveryForm({ order }: { order: AdminOrder }) {
   const update = useAdminOrderStatusMutation();

@@ -7,6 +7,9 @@ import {
   type ProductRow,
 } from '@/lib/dto'
 import { isPercent } from '@/lib/pricing'
+import { MAX_GALLERY_ITEMS, parseGallery } from '@/lib/media'
+
+const MAX_CARE_LENGTH = 2000
 
 function slugify(name: string): string {
   return (
@@ -109,11 +112,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'A valid stock count is required' }, { status: 400 })
     if (!category) return NextResponse.json({ error: 'Category is required' }, { status: 400 })
     if (!image) return NextResponse.json({ error: 'Image is required' }, { status: 400 })
+    const gallery = parseGallery(body.gallery ?? [])
+    if (!gallery)
+      return NextResponse.json(
+        { error: `Gallery must be up to ${MAX_GALLERY_ITEMS} photos or videos with web links` },
+        { status: 400 },
+      )
 
     const materials =
       typeof body.materials === 'string' && body.materials.trim() ? body.materials.trim() : ''
     const dimensions =
       typeof body.dimensions === 'string' && body.dimensions.trim() ? body.dimensions.trim() : ''
+    const careInstructions =
+      typeof body.careInstructions === 'string' ? body.careInstructions.trim() : ''
+    if (careInstructions.length > MAX_CARE_LENGTH)
+      return NextResponse.json(
+        { error: `Care instructions must be ${MAX_CARE_LENGTH} characters or fewer` },
+        { status: 400 },
+      )
     const featured = body.featured === true
     const discountPercent = body.discountPercent ?? 0
     const vatRate = body.vatRate ?? 0
@@ -149,6 +165,10 @@ export async function POST(req: NextRequest) {
         stock,
         category,
         image,
+        // only sent when set, so creating plain products still works before
+        // schema.sql adds the column
+        ...(gallery.length ? { gallery } : {}),
+        ...(careInstructions ? { care_instructions: careInstructions } : {}),
         materials,
         dimensions,
         featured,

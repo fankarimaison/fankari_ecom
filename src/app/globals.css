@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@clerk/ui/themes/shadcn.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -36,6 +35,11 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
   --color-brand: var(--brand);
+  --color-brand-dark: var(--brand-dark);
+  --color-brand-light: var(--brand-light);
+  --color-teal: var(--teal);
+  --color-teal-dark: var(--teal-dark);
+  --color-teal-light: var(--teal-light);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -47,45 +51,54 @@
 }
 
 /*
- * Fankari Maison — warm artisan palette (light theme only)
- * cream background · stone text · terracotta primary · sage secondary
- * NO indigo / blue / purple anywhere.
+ * Fankari Maison brand palette (light theme only)
+ *   brand red   #CD2A00 — primary: buttons, links, wordmark
+ *   brand teal  #0F5553 — secondary: announcement bar, badges, accents
+ *   plus their light tints for backgrounds and highlights.
+ * White on #CD2A00 ≈ 5.3:1, on #0F5553 ≈ 8.6:1 (both pass WCAG AA).
  */
 :root {
   --radius: 0.75rem;
-  --background: #faf6ef;
-  --foreground: #292524;
-  --card: #fffdf8;
-  --card-foreground: #292524;
-  --popover: #fffdf8;
-  --popover-foreground: #292524;
-  --primary: #b45309;
-  /* Logo terracotta (sampled from logo.jpg) — used for the brand wordmark */
-  --brand: #b93f1a;
-  --primary-foreground: #fff8ef;
-  --secondary: #e5e9dc;
-  --secondary-foreground: #3d4534;
-  --muted: #f1eadd;
-  --muted-foreground: #78716c;
-  --accent: #f4ecdf;
-  --accent-foreground: #7c3a0d;
+
+  /* Brand colours and their light tints */
+  --brand: #cd2a00;
+  --brand-dark: #a32100;
+  --brand-light: #fbe9e3;
+  --teal: #0f5553;
+  --teal-dark: #0a3e3c;
+  --teal-light: #e3f0ef;
+
+  --background: #fdf9f7;
+  --foreground: #1f2a29;
+  --card: #ffffff;
+  --card-foreground: #1f2a29;
+  --popover: #ffffff;
+  --popover-foreground: #1f2a29;
+  --primary: var(--brand);
+  --primary-foreground: #ffffff;
+  --secondary: var(--teal-light);
+  --secondary-foreground: var(--teal);
+  --muted: #f6eeea;
+  --muted-foreground: #5f6b6a;
+  --accent: var(--brand-light);
+  --accent-foreground: var(--brand-dark);
   --destructive: #b91c1c;
-  --border: #e7ddcc;
-  --input: #e0d5c1;
-  --ring: #c2701e;
-  --chart-1: #b45309;
-  --chart-2: #7d8b5e;
-  --chart-3: #d6a35c;
-  --chart-4: #8c6d4a;
-  --chart-5: #a8562f;
-  --sidebar: #f6f0e5;
-  --sidebar-foreground: #292524;
-  --sidebar-primary: #b45309;
-  --sidebar-primary-foreground: #fff8ef;
-  --sidebar-accent: #efe6d4;
-  --sidebar-accent-foreground: #292524;
-  --sidebar-border: #e7ddcc;
-  --sidebar-ring: #c2701e;
+  --border: #eddfd8;
+  --input: #e4d3cb;
+  --ring: var(--brand);
+  --chart-1: var(--brand);
+  --chart-2: var(--teal);
+  --chart-3: #e8806a;
+  --chart-4: #4f8f8c;
+  --chart-5: var(--brand-dark);
+  --sidebar: #fbf3f0;
+  --sidebar-foreground: #1f2a29;
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--brand-light);
+  --sidebar-accent-foreground: #1f2a29;
+  --sidebar-border: #eddfd8;
+  --sidebar-ring: var(--brand);
 }
 
 @layer base {
@@ -99,14 +112,14 @@
     scroll-behavior: smooth;
   }
   ::selection {
-    background: #f3ddb8;
-    color: #431407;
+    background: var(--brand-light);
+    color: var(--brand-dark);
   }
 
-  /* Thin, warm custom scrollbars */
+  /* Thin custom scrollbars in a soft teal */
   * {
     scrollbar-width: thin;
-    scrollbar-color: #d9cab2 transparent;
+    scrollbar-color: #b9d3d1 transparent;
   }
   ::-webkit-scrollbar {
     width: 8px;
@@ -116,11 +129,11 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background-color: #d9cab2;
+    background-color: #b9d3d1;
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background-color: #c2ac8d;
+    background-color: #8fb7b4;
   }
 }
 
@@ -131,10 +144,10 @@
   }
   /* Subtle paper grain texture for hero/backdrops */
   .bg-paper {
-    background-color: #f6efe3;
+    background-color: #fcf3ef;
     background-image:
-      radial-gradient(circle at 15% 20%, rgba(180, 83, 9, 0.06) 0%, transparent 45%),
-      radial-gradient(circle at 85% 10%, rgba(125, 139, 94, 0.08) 0%, transparent 40%),
-      radial-gradient(circle at 60% 90%, rgba(214, 163, 92, 0.07) 0%, transparent 45%);
+      radial-gradient(circle at 15% 20%, rgba(205, 42, 0, 0.07) 0%, transparent 45%),
+      radial-gradient(circle at 85% 10%, rgba(15, 85, 83, 0.09) 0%, transparent 40%),
+      radial-gradient(circle at 60% 90%, rgba(15, 85, 83, 0.05) 0%, transparent 45%);
   }
 }

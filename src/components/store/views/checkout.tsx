@@ -1,25 +1,24 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Banknote, Loader2, ShoppingBag } from "lucide-react";
+import { Loader2, MessageCircle, ShoppingBag } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useBag } from "@/lib/cart";
 import { useStore } from "@/lib/store";
 import { formatPrice } from "@/lib/format";
-import { isPaymentMethod, PAYMENT_METHODS, unitPrice } from "@/lib/pricing";
+import { PAYMENT_METHODS, unitPrice } from "@/lib/pricing";
 import { PriceSummary } from "../price-summary";
 import { apiPost, type Order } from "../api";
 import { useCartState } from "../cart-line";
-import { useMe } from "../hooks";
+import { useContent } from "../hooks";
+import { whatsAppOrderUrl } from "../whatsapp-order";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,13 +26,17 @@ import { Textarea } from "@/components/ui/textarea";
 const checkoutSchema = z.object({
   customerName: z.string().min(1, "Please tell us your name"),
   email: z.string().email("Please enter a valid email"),
-  phone: z.string().optional(),
+  phone: z
+    .string()
+    .refine((v) => v.replace(/\D/g, "").length >= 8, "Please enter your WhatsApp number"),
   address: z.string().min(1, "A shipping address is required"),
   city: z.string().min(1, "City is required"),
   postalCode: z.string().optional(),
   notes: z.string().optional(),
-  paymentMethod: z.string().refine((v): boolean => isPaymentMethod(v), "Please choose a payment method"),
 });
+
+/** Payment is arranged with the seller on WhatsApp (see PAYMENT_METHODS). */
+const PAYMENT_METHOD = PAYMENT_METHODS[0];
 
 type CheckoutForm = z.infer<typeof checkoutSchema>;
 
@@ -41,63 +44,61 @@ export function CheckoutView() {
   const { toast } = useToast();
   const navigate = useStore((s) => s.navigate);
   const queryClient = useQueryClient();
-  const { data: user, isLoading: meLoading } = useMe();
   const { cart, isLoading: cartLoading } = useCartState();
+  const clearBag = useBag((s) => s.clear);
+  const { data: content } = useContent();
 
-  // Prefill from the signed-in user — RHF re-syncs when `values` changes.
-  const prefill = useMemo<CheckoutForm>(
-    () => ({
-      customerName: user?.name ?? "",
-      email: user?.email ?? "",
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<CheckoutForm>({
+    resolver: zodResolver(checkoutSchema),
+    defaultValues: {
+      customerName: "",
+      email: "",
       phone: "",
       address: "",
       city: "",
       postalCode: "",
       notes: "",
-      paymentMethod: "",
-    }),
-    [user]
-  );
-
-  const {
-    register,
-    control,
-    watch,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<CheckoutForm>({
-    resolver: zodResolver(checkoutSchema),
-    values: prefill,
+    },
   });
-
-  // Redirect signed-out visitors to the account view (per spec).
-  useEffect(() => {
-    if (!meLoading && !user) {
-      toast({
-        title: "Please sign in",
-        description: "You need an account to check out.",
-        variant: "destructive",
-      });
-      navigate({ name: "account" });
-    }
-  }, [meLoading, user, toast, navigate]);
 
   const placeOrder = useMutation({
     mutationFn: async (values: CheckoutForm) => {
-      const data = await apiPost<{ order: Order }>("/api/orders", values);
+      // Check out exactly the priced lines shown in the summary
+      const items = (cart?.items ?? []).map((i) => ({
+        productId: i.productId,
+        quantity: i.quantity,
+      }));
+      const data = await apiPost<{ order: Order }>("/api/orders", {
+        ...values,
+        items,
+        paymentMethod: PAYMENT_METHOD.id,
+      });
       return data.order;
     },
     onSuccess: (order) => {
-      void queryClient.invalidateQueries({ queryKey: ["cart"] });
+      // No account to read the order back with — the confirmation page shows
+      // the order returned here.
+      queryClient.setQueryData(["order", order.id], order);
       void queryClient.invalidateQueries({ queryKey: ["products"] });
-      void queryClient.invalidateQueries({ queryKey: ["orders"] });
       void queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
       void queryClient.invalidateQueries({ queryKey: ["admin-stats"] });
       toast({
-        title: "Order placed — thank you!",
-        description: `Order ${order.orderNumber} is confirmed.`,
+        title: "Order saved — now send it on WhatsApp",
+        description: `Order ${order.orderNumber}: send the message to confirm it.`,
       });
+      // Open the pre-filled chat with the seller. Browsers may block this
+      // after the request, so the confirmation page also has the button.
+      window.open(
+        whatsAppOrderUrl(order, content?.whatsappNumber, content?.brandName ?? "Fankari Maison"),
+        "_blank",
+        "noopener"
+      );
       navigate({ name: "order-success", orderId: order.id });
+      clearBag();
     },
     onError: (error) => {
       toast({
@@ -108,7 +109,7 @@ export function CheckoutView() {
     },
   });
 
-  if (meLoading || !user) {
+  if (cartLoading) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         <Skeleton className="h-9 w-40" />
@@ -123,7 +124,7 @@ export function CheckoutView() {
   const items = cart?.items ?? [];
   const total = cart?.total ?? 0;
 
-  if (!cartLoading && items.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="mx-auto flex max-w-7xl flex-col items-center gap-4 px-4 py-24 text-center">
         <span className="flex size-14 items-center justify-center rounded-full bg-muted">
@@ -157,7 +158,8 @@ export function CheckoutView() {
         Checkout
       </h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Signed in as <span className="font-medium text-foreground">{user.email}</span>
+        No account needed — after placing your order you&apos;ll send it to us on
+        WhatsApp to confirm.
       </p>
 
       <form
@@ -195,14 +197,17 @@ export function CheckoutView() {
               {fieldError("email")}
             </div>
             <div>
-              <Label htmlFor="phone">Phone (optional)</Label>
+              <Label htmlFor="phone">WhatsApp number</Label>
               <Input
                 id="phone"
                 type="tel"
                 className="mt-1.5 min-h-11"
                 autoComplete="tel"
+                placeholder="+91 98765 43210"
+                aria-invalid={!!errors.phone}
                 {...register("phone")}
               />
+              {fieldError("phone")}
             </div>
             <div>
               <Label htmlFor="postalCode">Postal code (optional)</Label>
@@ -248,48 +253,22 @@ export function CheckoutView() {
           </CardContent>
         </Card>
 
-        {/* Payment — methods come from PAYMENT_METHODS (src/lib/pricing.ts) */}
+        {/* Payment — arranged with the seller on WhatsApp */}
         <Card className="lg:col-start-1">
           <CardHeader>
-            <CardTitle className="font-display text-lg">Payment method</CardTitle>
+            <CardTitle className="font-display text-lg">Confirm on WhatsApp</CardTitle>
           </CardHeader>
           <CardContent>
-            <Controller
-              control={control}
-              name="paymentMethod"
-              render={({ field }) => (
-                <RadioGroup
-                  value={field.value}
-                  onValueChange={field.onChange}
-                  aria-label="Payment method"
-                  aria-invalid={!!errors.paymentMethod}
-                  className="gap-3"
-                >
-                  {PAYMENT_METHODS.map((method) => (
-                    <Label
-                      key={method.id}
-                      htmlFor={`pay-${method.id}`}
-                      className={cn(
-                        "flex cursor-pointer items-center gap-3 rounded-lg border-2 p-4 font-normal transition-colors",
-                        field.value === method.id
-                          ? "border-primary bg-accent/40"
-                          : "border-border hover:border-primary/50",
-                      )}
-                    >
-                      <RadioGroupItem id={`pay-${method.id}`} value={method.id} />
-                      <Banknote className="size-5 shrink-0 text-primary" aria-hidden />
-                      <span>
-                        <span className="block text-sm font-semibold">{method.label}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {method.description}
-                        </span>
-                      </span>
-                    </Label>
-                  ))}
-                </RadioGroup>
-              )}
-            />
-            {fieldError("paymentMethod")}
+            <div className="flex items-start gap-3 rounded-lg border-2 border-primary bg-accent/40 p-4">
+              <MessageCircle className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+              <div className="text-sm">
+                <p className="font-semibold">{PAYMENT_METHOD.label}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                  When you place your order, WhatsApp opens with your order details
+                  ready to send to us. We confirm it there and share payment details.
+                </p>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -329,15 +308,21 @@ export function CheckoutView() {
               </ul>
             )}
             <Separator />
-            {cart && <PriceSummary totals={cart} paymentMethod={watch("paymentMethod")} />}
+            {cart && <PriceSummary totals={cart} paymentMethod={PAYMENT_METHOD.id} />}
             <Button
               type="submit"
               size="lg"
               disabled={placeOrder.isPending || cartLoading}
               className="mt-2 min-h-12 w-full rounded-full text-base"
             >
-              {placeOrder.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-              {placeOrder.isPending ? "Placing order…" : `Place order · ${formatPrice(total)}`}
+              {placeOrder.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <MessageCircle className="size-4" aria-hidden />
+              )}
+              {placeOrder.isPending
+                ? "Placing order…"
+                : `Order on WhatsApp · ${formatPrice(total)}`}
             </Button>
             <Button
               type="button"
